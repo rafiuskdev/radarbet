@@ -1,0 +1,307 @@
+/* ═══════════════════════════════════════════════════════
+   RadarBet Widget
+   ══════════════════════════════════════════════════════ */
+
+#radarbet-widget {
+  position: fixed;
+  bottom: 18px;
+  left: 18px;
+  width: 248px;
+  min-width: 200px;
+  background: rgba(10, 13, 20, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  color: #d4dae4;
+  font-family: 'Segoe UI', 'Inter', Arial, sans-serif;
+  font-size: 12px;
+  z-index: 2147483647;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+  overflow: hidden;
+}
+
+/* ── Flash branco (todo o widget) ─────────────────────── */
+#rb-flash-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 10;
+  background: transparent;
+}
+
+@keyframes rbFlashOverlay {
+  0%   { background: rgba(255, 255, 255, 0.30); }
+  100% { background: rgba(255, 255, 255, 0); }
+}
+
+#radarbet-widget.rb-flashing #rb-flash-overlay {
+  animation: rbFlashOverlay 0.9s ease-out forwards;
+}
+
+/* ── Botões comuns ─────────────────────────────────────── */
+.rb-close {
+  background: none; border: none;
+  color: rgba(255,255,255,0.45);
+  font-size: 15px; cursor: pointer; padding: 0; line-height: 1;
+  flex-shrink: 0;
+}
+.rb-close:hover { color: #fff; }
+
+.rb-btn-switch {
+  background: none; border: none;
+  color: rgba(255,255,255,0.35);
+  font-size: 13px; cursor: pointer; padding: 0;
+  flex-shrink: 0; transition: color 0.15s;
+}
+.rb-btn-switch:hover { color: #fff; }
+
+.rb-title {
+  font-weight: 800; font-size: 10px; letter-spacing: 1.5px; color: #fff;
+}
+
+/* ══════════════════════════════════════════════════════
+   PAINEL SELETOR
+   ══════════════════════════════════════════════════════ */
+
+.rb-sel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px 8px 0 0;
+  cursor: grab;
+}
+
+.rb-sel-body { padding: 10px; }
+
+.rb-section-label {
+  font-size: 9px; letter-spacing: 2px; color: #4a5568;
+  text-transform: uppercase; margin-bottom: 8px;
+}
+
+.rb-list-msg {
+  font-size: 11px; color: #6b7a8d; text-align: center;
+  padding: 10px 0; display: flex; flex-direction: column; gap: 4px;
+}
+
+.rb-list-sub { font-size: 9px; color: #3a4455; }
+
+.rb-game-btn {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07); border-radius: 6px;
+  color: #dde2ea; padding: 8px 10px; margin-bottom: 5px;
+  cursor: pointer; font-size: 11px; text-align: left;
+  transition: background 0.15s, border-color 0.15s;
+}
+.rb-game-btn:hover { background: rgba(0,200,100,0.1); border-color: rgba(0,200,100,0.3); }
+.rb-game-btn:last-child { margin-bottom: 0; }
+
+.rb-game-teams { font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rb-game-time  { font-size: 10px; color: #00c864; margin-left: 8px; font-weight: 700; flex-shrink: 0; }
+
+.rb-btn-refresh {
+  margin-top: 8px; width: 100%; background: none;
+  border: 1px solid rgba(255,255,255,0.08); border-radius: 5px;
+  color: #4a5568; font-size: 10px; padding: 5px; cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.rb-btn-refresh:hover { color: #fff; border-color: rgba(255,255,255,0.2); }
+
+/* ══════════════════════════════════════════════════════
+   PAINEL RADAR — TOPBAR
+   ══════════════════════════════════════════════════════ */
+
+#rb-panel-radar,
+#rb-panel-settings {
+  cursor: grab;
+}
+#rb-panel-radar:active,
+#rb-panel-settings:active {
+  cursor: grabbing;
+}
+
+.rb-topbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  position: relative;
+  z-index: 11;
+}
+
+.rb-mkt-tag {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: #00c864;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.rb-line-tag {
+  font-size: 9px;
+  font-weight: 700;
+  color: #4a7a8a;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.rb-topbar-time {
+  font-size: 10px;
+  font-weight: 700;
+  color: #3a5060;
+  flex-shrink: 0;
+}
+
+.rb-g2-pair {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.rb-g2-odd {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6a7888;
+}
+
+.rb-g2-fair {
+  font-size: 10px;
+  color: #3a4a58;
+}
+
+.rb-row-spacer { flex: 1; }
+
+/* ══════════════════════════════════════════════════════
+   PAINEL RADAR — CARDS (bet365 | betfair)
+   ══════════════════════════════════════════════════════ */
+
+.rb-cards-row {
+  display: flex;
+  gap: 7px;
+  padding: 8px 9px;
+  position: relative;
+  z-index: 11;
+}
+
+.rb-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-radius: 6px;
+  padding: 8px 5px;
+  gap: 1px;
+}
+
+.rb-card-365 {
+  background: rgba(0, 110, 55, 0.22);
+  border: 1px solid rgba(0, 200, 100, 0.18);
+}
+
+.rb-card-bf {
+  background: rgba(110, 85, 0, 0.22);
+  border: 1px solid rgba(200, 155, 0, 0.18);
+}
+
+.rb-card-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  object-fit: cover;
+  margin-bottom: 4px;
+}
+
+.rb-card-adj {
+  font-size: 11px;
+  font-weight: 700;
+  color: #3a4a58;
+  line-height: 1.4;
+}
+
+.rb-card-main {
+  font-size: 22px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -1px;
+  line-height: 1;
+  margin: 2px 0;
+}
+
+/* ══════════════════════════════════════════════════════
+   PAINEL RADAR — TIMER, Nx, STATUS
+   ══════════════════════════════════════════════════════ */
+
+.rb-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  position: relative;
+  z-index: 11;
+}
+
+.rb-row-timer {
+  padding-top: 2px;
+  padding-bottom: 4px;
+  gap: 4px;
+}
+
+.rb-timer-icon {
+  font-size: 10px; color: #3a4a5a;
+}
+
+.rb-timer {
+  font-size: 11px; font-weight: 700;
+  color: #4a5a6a; letter-spacing: 0.5px;
+}
+
+.rb-row-nx {
+  padding-top: 5px;
+  padding-bottom: 7px;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  gap: 4px;
+}
+
+.rb-nx-label {
+  font-size: 9px; font-weight: 700; color: #3a4a58;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+
+.rb-nx-odd {
+  font-size: 13px; font-weight: 700; color: #c8d0db;
+}
+
+.rb-nx-ind {
+  font-size: 10px; font-weight: 700; color: #3a4a58; min-width: 10px;
+}
+.rb-nx-value { color: #00d472; }
+
+.rb-nx-spacer { flex: 1; }
+
+.rb-status {
+  font-size: 8px; color: #2a3340;
+  text-align: right; padding: 2px 9px 5px;
+  letter-spacing: 0.3px; position: relative; z-index: 11;
+}
+
+.rb-link { color: #00a856; text-decoration: none; }
+.rb-link:hover { text-decoration: underline; }
+
+/* ── Resize handle ─────────────────────────────────────── */
+#rb-resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: se-resize;
+  background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.12) 50%);
+  border-radius: 0 0 8px 0;
+  z-index: 12;
+}

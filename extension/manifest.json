@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "RadarBet",
+  "version": "1.3.0",
+  "description": "Radar de futebol ao vivo com análise de odds da bet365",
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "host_permissions": [
+    "*://*.bet365.com/*",
+    "*://rushflows.vip/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.bet365.com/*"],
+      "js": ["scraper.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://rushflows.vip/*"],
+      "js": ["content.js"],
+      "css": ["radar.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    },
+    "default_title": "RadarBet"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["data/odds_justas.json", "icons/logo-bet365.jpg", "icons/logo-betfair.png"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  }
+}
