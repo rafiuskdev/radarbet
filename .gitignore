@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+app/out/
+app/dist/
+app/.vite/
+
+# Extension build
+extension/dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Electron packager
+release/
+
+# Environment
+.env
+.env.local

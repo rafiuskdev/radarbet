@@ -1,0 +1,340 @@
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import type { GameData } from '../electron.d'
+import rawOddsTable from '../data/odds_justas.json'
+import logo365 from '../assets/logo-bet365.jpg'
+import logoBF  from '../assets/logo-betfair.png'
+import type { LiveGame } from '../electron.d'
+
+interface OddsRow { mercado: number; justa: number }
+const oddsTable = rawOddsTable as OddsRow[]
+
+function getFairOdd(mkt: number | null): number | null {
+  if (!mkt || isNaN(mkt) || !oddsTable.length) return null
+  let best = oddsTable[0], minDiff = Infinity
+  for (const row of oddsTable) {
+    const d = Math.abs(mkt - row.mercado)
+    if (d < minDiff) { minDiff = d; best = row }
+  }
+  return best.justa
+}
+
+function getAdjacentOdds(mkt: number | null) {
+  if (!mkt || isNaN(mkt) || !oddsTable.length) return { above: null as OddsRow | null, below: null as OddsRow | null }
+  let idx = 0, minDiff = Infinity
+  for (let i = 0; i < oddsTable.length; i++) {
+    const d = Math.abs(mkt - oddsTable[i].mercado)
+    if (d < minDiff) { minDiff = d; idx = i }
+  }
+  return {
+    above: idx > 0                    ? oddsTable[idx - 1] : null,
+    below: idx < oddsTable.length - 1 ? oddsTable[idx + 1] : null,
+  }
+}
+
+function fmt(v: number | null): string { return v != null ? v.toFixed(2) : '—' }
+
+
+interface Props {
+  game: LiveGame
+  onBack: () => void
+}
+
+export function RadarPanel({ game, onBack }: Props) {
+  const [gameData,     setGameData]     = useState<GameData | null>(null)
+  const [isStale,      setIsStale]      = useState(false)
+  const [flashing,     setFlashing]     = useState(false)
+  const [timerTxt,     setTimerTxt]     = useState('0:00')
+  const [timerColor,   setTimerColor]   = useState('')
+  const [oddDir,          setOddDir]          = useState<'up' | 'down' | null>(null)
+  const [selectedLineIdx, setSelectedLineIdx] = useState(0)
+  const [showSettings,    setShowSettings]    = useState(false)
+  const [opacity,      setOpacity]      = useState(1.0)
+  const [fontSize,     setFontSize]     = useState(12) // px base; zoom = fontSize/12
+
+  const prevOdds   = useRef<Record<string, number | null>>({})
+  const changedAt  = useRef<Record<string, number>>({})
+  const prevG1Ref  = useRef<number | null>(null)
+  const staleRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const widgetRef  = useRef<HTMLDivElement>(null)
+  const resizeRef  = useRef<HTMLDivElement>(null)
+
+  // Recebe dados do scraper via IPC
+  useEffect(() => {
+    const off = window.electronAPI.onGameDataUpdate(data => {
+      setGameData(data)
+      setIsStale(false)
+      if (staleRef.current) clearTimeout(staleRef.current)
+      staleRef.current = setTimeout(() => setIsStale(true), 10_000)
+    })
+    const offClosed = window.electronAPI.onBet365Closed(() => setGameData(null))
+    return () => { off(); offClosed() }
+  }, [])
+
+  // Timer de estabilidade da odd
+  useEffect(() => {
+    const id = setInterval(() => {
+      const since = changedAt.current['g1-odd']
+      if (!since) { setTimerTxt('0:00'); setTimerColor(''); return }
+      const s = Math.floor((Date.now() - since) / 1000)
+      setTimerTxt(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`)
+      setTimerColor(s >= 120 ? '#f08030' : s >= 60 ? '#e8c030' : '')
+    }, 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Rastreia mudanças de odd, dispara flash e detecta direção
+  const trackOdd = useCallback((id: string, newVal: number | null, doFlash = false) => {
+    const rounded = newVal != null ? +newVal.toFixed(2) : null
+    const isFirst = !(id in prevOdds.current)
+    if (!isFirst && prevOdds.current[id] !== rounded && rounded !== null) {
+      changedAt.current[id] = Date.now()
+      if (doFlash) { setFlashing(true); setTimeout(() => setFlashing(false), 900) }
+    }
+    if (isFirst) changedAt.current[id] = Date.now()
+    prevOdds.current[id] = rounded
+  }, [])
+
+  useEffect(() => {
+    if (!gameData) return
+
+    // Calcula g1Under inline para evitar TDZ (g1Under é declarado abaixo)
+    const score  = typeof gameData.score === 'number' ? gameData.score : 0
+    const target = score + 0.5
+    const lines  = gameData.goals?.lines ?? []
+    const start  = Math.max(0, lines.findIndex(l => l.line >= target))
+    const avail  = lines.slice(start, start + 3)
+    const g1     = avail[selectedLineIdx]?.under ?? null
+
+    // Seta direcional: compara com o valor anterior
+    if (prevG1Ref.current !== null && g1 !== null && g1 !== prevG1Ref.current) {
+      setOddDir(g1 > prevG1Ref.current ? 'up' : 'down')
+    }
+    if (g1 !== null) prevG1Ref.current = g1
+
+    trackOdd('g1-odd', g1, true)
+    trackOdd('nx1-odd', gameData.nextGoal?.team1.odd ?? null)
+    trackOdd('nx2-odd', gameData.nextGoal?.team2.odd ?? null)
+  }, [gameData, trackOdd, selectedLineIdx])
+
+  // Handle de resize da janela Electron
+  useEffect(() => {
+    const handle = resizeRef.current
+    const widget = widgetRef.current
+    if (!handle || !widget) return
+    let resizing = false, sx = 0, sy = 0, sw = 0, sh = 0
+    const onDown = (e: MouseEvent) => {
+      resizing = true; sx = e.clientX; sy = e.clientY
+      sw = widget.offsetWidth; sh = widget.offsetHeight
+      document.body.style.cursor = 'se-resize'
+      e.preventDefault(); e.stopPropagation()
+    }
+    const onMove = (e: MouseEvent) => {
+      if (!resizing) return
+      window.electronAPI.resizeWindow(Math.max(200, sw + (e.clientX - sx)), Math.max(150, sh + (e.clientY - sy)))
+    }
+    const onUp = () => { resizing = false; document.body.style.cursor = '' }
+    handle.addEventListener('mousedown', onDown)
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    return () => {
+      handle.removeEventListener('mousedown', onDown)
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+  }, [])
+
+  // 3 linhas disponíveis a partir do score actual
+  const availableLines = useMemo(() => {
+    if (!gameData?.goals?.lines?.length) return []
+    const score  = typeof gameData.score === 'number' ? gameData.score : 0
+    const target = score + 0.5
+    const lines  = gameData.goals.lines
+    const start  = Math.max(0, lines.findIndex(l => l.line >= target))
+    return lines.slice(start, start + 3)
+  }, [gameData?.goals?.lines, gameData?.score])
+
+  // Reset ao índice 0 quando o score muda (nova linha base)
+  const prevAutoLineRef = useRef<number | null>(null)
+  useEffect(() => {
+    const autoLine = availableLines[0]?.line ?? null
+    if (autoLine !== prevAutoLineRef.current) {
+      prevAutoLineRef.current = autoLine
+      setSelectedLineIdx(0)
+      setOddDir(null)
+      prevG1Ref.current = null
+    }
+  }, [availableLines])
+
+  // Derivações baseadas na linha seleccionada
+  const selectedLine = availableLines[selectedLineIdx] ?? null
+  const g1Under  = selectedLine?.under ?? null
+  const g2Under  = availableLines[selectedLineIdx + 1]?.under ?? null  // linha seguinte
+  const isHalf   = gameData?.goals?.isHalf ?? false
+  const line1Num = selectedLine?.line ?? null
+  const adj      = getAdjacentOdds(g1Under)
+  const g1Fair   = getFairOdd(g1Under)
+  const g2Fair   = getFairOdd(g2Under)
+  const nx1Odd   = gameData?.nextGoal?.team1.odd ?? null
+  const nx2Odd   = gameData?.nextGoal?.team2.odd ?? null
+  const nx1Fair  = getFairOdd(nx1Odd)
+  const nx2Fair  = getFairOdd(nx2Odd)
+  const isG1Value  = g1Under  != null && g1Fair  != null && g1Under  >= g1Fair
+  const isNx1Value = nx1Odd   != null && nx1Fair != null && nx1Odd   >= nx1Fair
+  const isNx2Value = nx2Odd   != null && nx2Fair != null && nx2Odd   >= nx2Fair
+
+  const statusText = (() => {
+    if (!gameData) return ''
+    const ts = new Date(gameData.updatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    return isStale ? `⚠ Dados antigos (${ts})` : ts
+  })()
+
+  return (
+    <div
+      ref={widgetRef}
+      className={`screen-radar${flashing ? ' rb-flashing' : ''}`}
+      style={{ opacity, zoom: fontSize / 12 }}
+    >
+      <div id="rb-flash-overlay" />
+
+      {/* Topbar */}
+      <div className="radar-topbar rb-drag">
+        <button className="gm-back-btn rb-no-drag" onClick={onBack} title="Voltar ao menu">←</button>
+        <span className="rb-mkt-tag">{gameData?.goals ? (isHalf ? 'HT' : 'FT') : '—'}</span>
+
+        {/* Selector de linhas — 3 botões clicáveis */}
+        <div className="rb-line-btns rb-no-drag">
+          {availableLines.length > 0
+            ? availableLines.map((l, i) => (
+                <button
+                  key={l.line}
+                  className={`rb-line-btn${selectedLineIdx === i ? ' active' : ''}`}
+                  onClick={() => { setSelectedLineIdx(i); setOddDir(null); prevG1Ref.current = null }}
+                  title={`Seleccionar linha U${l.line}`}
+                >
+                  {l.line}
+                </button>
+              ))
+            : <span className="rb-line-tag">—</span>
+          }
+        </div>
+
+        <span className="rb-topbar-time">{gameData?.time || '--:--'}</span>
+        <span className="rb-row-spacer" />
+        <button className="rb-btn-switch rb-no-drag" title="Minimizar" onClick={() => window.electronAPI.minimizeWindow()}>−</button>
+        <button
+          className={`rb-btn-switch rb-no-drag${showSettings ? ' rb-btn-active' : ''}`}
+          title="Configurações"
+          onClick={() => setShowSettings(s => !s)}
+        >⚙</button>
+        <button className="rb-close rb-no-drag" onClick={() => window.close()}>×</button>
+      </div>
+
+      {/* Referência do jogo */}
+      <div className="radar-game-ref rb-drag">
+        <span className="radar-game-teams">{game.team1} × {game.team2}</span>
+        <span className="radar-game-meta">{game.league}</span>
+      </div>
+
+      {/* Painel de configurações */}
+      {showSettings && (
+        <div className="radar-settings-panel rb-no-drag">
+          <div className="rsp-row">
+            <span className="rsp-label">Opacidade</span>
+            <span className="rsp-val">{Math.round(opacity * 100)}%</span>
+            <input
+              className="rsp-slider"
+              type="range"
+              min="10" max="100" step="5"
+              value={Math.round(opacity * 100)}
+              onChange={e => setOpacity(parseInt(e.target.value) / 100)}
+            />
+          </div>
+          <div className="rsp-row">
+            <span className="rsp-label">Fonte</span>
+            <span className="rsp-val">{fontSize}px</span>
+            <input
+              className="rsp-slider"
+              type="range"
+              min="9" max="18" step="1"
+              value={fontSize}
+              onChange={e => setFontSize(parseInt(e.target.value))}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Skeleton: aguardando primeiros dados do scraper */}
+      {!gameData && (
+        <div className="radar-skeleton rb-drag">
+          <div className="rb-cards-row">
+            <div className="rb-card rb-card-365">
+              <div className="sk-line sk-radar-logo" />
+              <div className="sk-line sk-radar-adj" />
+              <div className="sk-line sk-radar-main" />
+              <div className="sk-line sk-radar-adj" />
+            </div>
+            <div className="rb-card rb-card-bf">
+              <div className="sk-line sk-radar-logo" />
+              <div className="sk-line sk-radar-adj" />
+              <div className="sk-line sk-radar-main" />
+              <div className="sk-line sk-radar-adj" />
+            </div>
+          </div>
+          <div className="rb-row rb-row-timer">
+            <div className="sk-line sk-radar-timer" />
+          </div>
+          <div className="rb-row rb-row-nx">
+            <div className="sk-line sk-radar-nx" />
+          </div>
+          <div className="radar-skeleton-msg">Aguardando dados…</div>
+        </div>
+      )}
+
+      {/* Dados reais */}
+      {gameData && <>
+        <div className="rb-cards-row rb-drag">
+          <div className="rb-card rb-card-365">
+            <img className="rb-card-logo" src={logo365} alt="bet365" />
+            <span className="rb-card-adj">{adj.above ? fmt(adj.above.mercado) : '—'}</span>
+            <span className="rb-card-main">{fmt(g1Under)}</span>
+            <span className="rb-card-adj">{adj.below ? fmt(adj.below.mercado) : '—'}</span>
+          </div>
+          <div className="rb-card rb-card-bf">
+            <img className="rb-card-logo" src={logoBF} alt="betfair" />
+            <span className="rb-card-adj">{adj.above ? fmt(adj.above.justa) : '—'}</span>
+            <div className="rb-card-main-row">
+              <span className="rb-card-main" style={{ color: g1Fair ? (isG1Value ? '#00d472' : '') : '' }}>
+                {fmt(g1Fair)}
+              </span>
+              {oddDir && (
+                <span className={`rb-odd-arrow ${oddDir === 'up' ? 'rb-odd-up' : 'rb-odd-down'}`}>
+                  {oddDir === 'up' ? '▲' : '▼'}
+                </span>
+              )}
+            </div>
+            <span className="rb-card-adj">{adj.below ? fmt(adj.below.justa) : '—'}</span>
+          </div>
+        </div>
+
+        <div className="rb-row rb-row-timer rb-drag">
+          <span className="rb-timer-icon" style={{ color: timerColor }}>⊙</span>
+          <span className="rb-timer"      style={{ color: timerColor }}>{timerTxt}</span>
+        </div>
+
+        <div className="rb-row rb-row-nx rb-drag">
+          <span className="rb-nx-label">Nx1</span>
+          <span className="rb-nx-odd">{fmt(nx1Odd)}</span>
+          <span className={`rb-nx-ind${isNx1Value ? ' rb-nx-value' : ''}`}>{nx1Fair ? (isNx1Value ? '▲' : '─') : '●'}</span>
+          <span className="rb-nx-spacer" />
+          <span className="rb-nx-label">Nx2</span>
+          <span className="rb-nx-odd">{fmt(nx2Odd)}</span>
+          <span className={`rb-nx-ind${isNx2Value ? ' rb-nx-value' : ''}`}>{nx2Fair ? (isNx2Value ? '▲' : '─') : '●'}</span>
+        </div>
+
+        <div className="rb-status">{statusText}</div>
+      </>}
+
+      <div ref={resizeRef} id="rb-resize-handle" className="rb-no-drag" />
+    </div>
+  )
+}
