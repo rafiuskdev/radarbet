@@ -50,8 +50,10 @@ export async function launchChrome(): Promise<void> {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-extensions',
+      '--window-size=800,600',
+      '--start-minimized',
     ],
-    defaultViewport: { width: 1280, height: 800 },
+    defaultViewport: { width: 800, height: 600 },
   })
 
   // Aba 1: lista de jogos ao vivo (nunca navega para fora de /IP/B1)
