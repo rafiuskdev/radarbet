@@ -12,6 +12,7 @@
 
 import { existsSync } from 'fs'
 import type { Browser, Page } from 'puppeteer-core'
+import { hideChromeFromTaskbar } from './chromeBridge'
 
 const RF_HOME = 'https://www.radarfutebol.com/'
 
@@ -269,6 +270,8 @@ async function ensureRfBrowser(): Promise<boolean> {
     rfGamePages.clear()
   })
   console.log('[rfBridge] Browser de scoreboard lançado')
+  const rfPid = rfBrowser.process()?.pid
+  if (rfPid) hideChromeFromTaskbar(rfPid)
   return true
 }
 
@@ -336,6 +339,8 @@ export async function navigateToRfGame(
   const newPage = await rfBrowser.newPage()
 
   await newPage.goto(scoreboardUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 })
+  const rfPid = rfBrowser.process()?.pid
+  if (rfPid) hideChromeFromTaskbar(rfPid)
   await newPage.waitForSelector('#scoreboard:not(.loading-animation)', { timeout: 15_000 }).catch(() => {})
   await new Promise(r => setTimeout(r, 1000))
 

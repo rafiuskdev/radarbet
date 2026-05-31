@@ -355,6 +355,13 @@ function setupIPC(): void {
   })
 }
 
+// ── Flags Chromium (equivalentes às do Puppeteer) ─────────────────────────────
+// Precisam ser aplicadas antes de qualquer renderer ser criado
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
+app.commandLine.appendSwitch('no-first-run')
+app.commandLine.appendSwitch('no-default-browser-check')
+app.commandLine.appendSwitch('disable-extensions')
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   setupIPC()
