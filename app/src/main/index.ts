@@ -305,7 +305,7 @@ function setupIPC(): void {
     }
 
     if (featureId === 'lances') {
-      const g = gameWinData.get(gwId) as { team1: string; team2: string } | null
+      const g = gameWinData.get(gwId) as { team1: string; team2: string; score?: string; time?: string } | null
       const compositeKey = `${gwId}:lances`
       if (g?.team1 && g?.team2) {
         featureWins.get(compositeKey)?.webContents.send('rfGameChanged')
@@ -313,8 +313,7 @@ function setupIPC(): void {
         const epoch = ++rfNavEpoch
         launchRfChrome()
           .then(async () => {
-            // Passa compositeKey como pageKey — cada painel tem a sua página RF
-            const nav = await navigateToRfGame(g.team1, g.team2, compositeKey)
+            const nav = await navigateToRfGame(g.team1, g.team2, compositeKey, g.score, g.time)
             if (epoch !== rfNavEpoch) return
             if (nav.ok) {
               startRfMatchPolling()

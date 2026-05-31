@@ -121,6 +121,33 @@ function fuzzy(hay: string, needle: string): boolean {
   return n.split(' ').filter(w => w.length >= 3).some(w => h.includes(w))
 }
 
+// Pontuação de compatibilidade RF × bet365 (maior = melhor match):
+//   +3 nome fuzzy (ambos os times)
+//   +4 placar idêntico ("1-2" == "1-2")
+//   +1 tempo próximo (±5 min)
+// Mínimo para aceitar: 3 pts
+function scoreRfMatch(ev: SseEvento, t1: string, t2: string, bet365Score?: string, bet365Time?: string): number {
+  let pts = 0
+
+  const nameMatch =
+    (fuzzy(ev.timeCasa, t1) && fuzzy(ev.timeFora, t2)) ||
+    (fuzzy(ev.timeCasa, t2) && fuzzy(ev.timeFora, t1))
+  if (nameMatch) pts += 3
+
+  if (bet365Score) {
+    const rfScore = `${ev.golTimeCasaFt ?? 0}-${ev.golTimeForaFt ?? 0}`
+    if (rfScore === bet365Score) pts += 4
+  }
+
+  if (bet365Time) {
+    const rfMin  = parseInt(ev.tempoAtual, 10)
+    const b365Min = parseInt(bet365Time,   10)
+    if (!isNaN(rfMin) && !isNaN(b365Min) && Math.abs(rfMin - b365Min) <= 5) pts += 1
+  }
+
+  return pts
+}
+
 function sseToRfGame(ev: SseEvento): RfGame {
   return {
     team1:   ev.timeCasa,
@@ -295,6 +322,8 @@ export async function navigateToRfGame(
   team1: string,
   team2: string,
   pageKey = 'legacy:lances',
+  bet365Score?: string,
+  bet365Time?: string,
 ): Promise<RfNavResult> {
   // Reutiliza página existente para este painel
   const existing = rfGamePages.get(pageKey)
@@ -309,20 +338,24 @@ export async function navigateToRfGame(
     await new Promise(r => setTimeout(r, 300))
   }
 
-  // Fuzzy match no cache SSE para obter idWilliamhill
+  // Scoring match: combina nome + placar + tempo para tolerar grafias diferentes
+  const MIN_SCORE = 3
   let matched: SseEvento | null = null
+  let bestPts = 0
   for (const ev of sseGames.values()) {
-    if ((fuzzy(ev.timeCasa, team1) || fuzzy(ev.timeCasa, team2)) &&
-        (fuzzy(ev.timeFora, team1) || fuzzy(ev.timeFora, team2))) {
-      matched = ev
-      break
+    const pts = scoreRfMatch(ev, team1, team2, bet365Score, bet365Time)
+    if (pts >= MIN_SCORE && pts > bestPts) {
+      bestPts = pts
+      matched  = ev
     }
   }
 
   if (!matched) {
-    console.warn('[rfBridge] Jogo não encontrado no SSE:', team1, 'x', team2)
+    console.warn('[rfBridge] Jogo não encontrado no SSE:', team1, 'x', team2,
+      '| score:', bet365Score, '| time:', bet365Time)
     return { ok: false, reason: 'not-found' }
   }
+  console.log('[rfBridge] Match encontrado (pts=%d):', bestPts, matched.timeCasa, 'x', matched.timeFora)
 
   const whId = matched.idWilliamhill
   if (!whId) {
