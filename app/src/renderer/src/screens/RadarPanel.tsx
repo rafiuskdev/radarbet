@@ -33,6 +33,24 @@ function getAdjacentOdds(mkt: number | null) {
 
 function fmt(v: number | null): string { return v != null ? v.toFixed(2) : '—' }
 
+let _audioCtx: AudioContext | null = null
+function playBeep(volume = 0.25, freq = 880, dur = 0.12) {
+  try {
+    if (!_audioCtx) _audioCtx = new AudioContext()
+    if (_audioCtx.state === 'suspended') _audioCtx.resume()
+    const osc  = _audioCtx.createOscillator()
+    const gain = _audioCtx.createGain()
+    osc.connect(gain)
+    gain.connect(_audioCtx.destination)
+    osc.frequency.value = freq
+    osc.type = 'sine'
+    const t = _audioCtx.currentTime
+    gain.gain.setValueAtTime(volume, t)
+    gain.gain.exponentialRampToValueAtTime(0.001, t + dur)
+    osc.start(t)
+    osc.stop(t + dur)
+  } catch {}
+}
 
 interface Props {
   game: LiveGame
@@ -48,13 +66,18 @@ export function RadarPanel({ game, onBack }: Props) {
   const [oddDir,          setOddDir]          = useState<'up' | 'down' | null>(null)
   const [selectedLineIdx, setSelectedLineIdx] = useState(0)
   const [showSettings,    setShowSettings]    = useState(false)
+  const [soundEnabled,    setSoundEnabled]    = useState(true)
+  const [soundVolume,     setSoundVolume]     = useState(25)
   const [opacity,      setOpacity]      = useState(1.0)
   const [fontSize,     setFontSize]     = useState(12) // px base; zoom = fontSize/12
 
-  const prevOdds   = useRef<Record<string, number | null>>({})
-  const changedAt  = useRef<Record<string, number>>({})
-  const prevG1Ref  = useRef<number | null>(null)
-  const staleRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const prevOdds          = useRef<Record<string, number | null>>({})
+  const changedAt         = useRef<Record<string, number>>({})
+  const prevG1Ref         = useRef<number | null>(null)
+  const selectedLineNumRef = useRef<number | null>(null)
+  const soundEnabledRef   = useRef(true)
+  const soundVolumeRef    = useRef(0.25)
+  const staleRef          = useRef<ReturnType<typeof setTimeout> | null>(null)
   const widgetRef  = useRef<HTMLDivElement>(null)
   const resizeRef  = useRef<HTMLDivElement>(null)
 
@@ -70,10 +93,11 @@ export function RadarPanel({ game, onBack }: Props) {
     return () => { off(); offClosed() }
   }, [])
 
-  // Timer de estabilidade da odd
+  // Timer de estabilidade da odd — usa chave por linha para não zerar ao trocar de linha
   useEffect(() => {
     const id = setInterval(() => {
-      const since = changedAt.current['g1-odd']
+      const key   = 'g1-odd-' + selectedLineNumRef.current
+      const since = changedAt.current[key]
       if (!since) { setTimerTxt('0:00'); setTimerColor(''); return }
       const s = Math.floor((Date.now() - since) / 1000)
       setTimerTxt(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`)
@@ -82,28 +106,35 @@ export function RadarPanel({ game, onBack }: Props) {
     return () => clearInterval(id)
   }, [])
 
-  // Rastreia mudanças de odd, dispara flash e detecta direção
-  const trackOdd = useCallback((id: string, newVal: number | null, doFlash = false) => {
+  // Rastreia mudanças de odd, dispara flash e detecta direção. Retorna true se houve mudança.
+  const trackOdd = useCallback((id: string, newVal: number | null, doFlash = false): boolean => {
     const rounded = newVal != null ? +newVal.toFixed(2) : null
     const isFirst = !(id in prevOdds.current)
+    let changed = false
     if (!isFirst && prevOdds.current[id] !== rounded && rounded !== null) {
       changedAt.current[id] = Date.now()
+      changed = true
       if (doFlash) { setFlashing(true); setTimeout(() => setFlashing(false), 900) }
     }
     if (isFirst) changedAt.current[id] = Date.now()
     prevOdds.current[id] = rounded
+    return changed
   }, [])
 
   useEffect(() => {
     if (!gameData) return
 
-    // Calcula g1Under inline para evitar TDZ (g1Under é declarado abaixo)
-    const score  = typeof gameData.score === 'number' ? gameData.score : 0
-    const target = score + 0.5
-    const lines  = gameData.goals?.lines ?? []
-    const start  = Math.max(0, lines.findIndex(l => l.line >= target))
-    const avail  = lines.slice(start, start + 3)
-    const g1     = avail[selectedLineIdx]?.under ?? null
+    const score   = typeof gameData.score === 'number' ? gameData.score : 0
+    const target  = score + 0.5
+    const lines   = gameData.goals?.lines ?? []
+    const start   = Math.max(0, lines.findIndex(l => l.line >= target))
+    const avail   = lines.slice(start, start + 3)
+    const sel     = avail[selectedLineIdx]
+    const g1      = sel?.under ?? null
+    const lineNum = sel?.line ?? null
+
+    // Mantém ref do número da linha para o timer interval poder ler sem dependência
+    selectedLineNumRef.current = lineNum
 
     // Seta direcional: compara com o valor anterior
     if (prevG1Ref.current !== null && g1 !== null && g1 !== prevG1Ref.current) {
@@ -111,10 +142,17 @@ export function RadarPanel({ game, onBack }: Props) {
     }
     if (g1 !== null) prevG1Ref.current = g1
 
-    trackOdd('g1-odd', g1, true)
+    // Chave inclui o número da linha — evita falso "mudança" ao trocar de linha
+    const g1Changed = trackOdd('g1-odd-' + lineNum, g1, true)
+    if (g1Changed && soundEnabledRef.current) playBeep(soundVolumeRef.current)
+
     trackOdd('nx1-odd', gameData.nextGoal?.team1.odd ?? null)
     trackOdd('nx2-odd', gameData.nextGoal?.team2.odd ?? null)
   }, [gameData, trackOdd, selectedLineIdx])
+
+  const toggleSound = useCallback(() => {
+    setSoundEnabled(prev => { soundEnabledRef.current = !prev; return !prev })
+  }, [])
 
   // Handle de resize da janela Electron
   useEffect(() => {
@@ -258,6 +296,32 @@ export function RadarPanel({ game, onBack }: Props) {
               min="9" max="18" step="1"
               value={fontSize}
               onChange={e => setFontSize(parseInt(e.target.value))}
+            />
+          </div>
+          <div className="rsp-row">
+            <span className="rsp-label">Alertas</span>
+            <button
+              className={`rb-btn-switch rb-no-drag${soundEnabled ? ' rb-btn-active' : ''}`}
+              style={{ marginLeft: 'auto' }}
+              onClick={toggleSound}
+              title={soundEnabled ? 'Desativar alertas sonoros' : 'Ativar alertas sonoros'}
+            >
+              {soundEnabled ? '♪ On' : '♪ Off'}
+            </button>
+          </div>
+          <div className="rsp-row">
+            <span className="rsp-label">Volume</span>
+            <span className="rsp-val">{soundVolume}%</span>
+            <input
+              className="rsp-slider"
+              type="range"
+              min="5" max="100" step="5"
+              value={soundVolume}
+              onChange={e => {
+                const v = parseInt(e.target.value)
+                setSoundVolume(v)
+                soundVolumeRef.current = v / 100
+              }}
             />
           </div>
         </div>
