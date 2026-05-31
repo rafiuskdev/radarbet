@@ -1,12 +1,8 @@
-// Puppeteer-core é ESM puro — usar import dinâmico para compatibilidade com CommonJS do Electron
 import type { Browser, Page } from 'puppeteer-core'
-import { existsSync } from 'fs'
+import { existsSync, writeFileSync } from 'fs'
 import { join } from 'path'
-
-async function getPuppeteer() {
-  const mod = await import('puppeteer-core')
-  return mod.default
-}
+import { tmpdir } from 'os'
+import { spawn } from 'child_process'
 
 // ─── Localização do Chrome no Windows ────────────────────────────────────────
 
@@ -19,26 +15,94 @@ const CHROME_PATHS = [
 
 export function findChrome(): string | null {
   for (const p of CHROME_PATHS) {
-    if (existsSync(p)) {
-      console.log('[chromeBridge] Chrome encontrado em:', p)
-      return p
-    }
+    if (existsSync(p)) return p
   }
-  console.error('[chromeBridge] Chrome não encontrado. Caminhos testados:', CHROME_PATHS)
   return null
+}
+
+// ─── Remove ícones do Chrome da taskbar (ITaskbarList::DeleteTab + WS_EX_TOOLWINDOW) ──
+// Usa retry loop interno de até 9s — assim não depende de timing externo.
+// ITaskbarList::DeleteTab é a mesma API que o Electron usa para skipTaskbar.
+export function hideChromeFromTaskbar(pid: number): void {
+  const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+[ComImport, Guid("56FDF342-FD6D-11d0-958A-006097C9A090"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface ITaskbarList {
+    [PreserveSig] int HrInit();
+    [PreserveSig] int AddTab(IntPtr hwnd);
+    [PreserveSig] int DeleteTab(IntPtr hwnd);
+    [PreserveSig] int ActivateTab(IntPtr hwnd);
+    [PreserveSig] int SetActiveAlt(IntPtr hwnd);
+}
+
+public class WinHide {
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc fn, IntPtr lp);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int n);
+    [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int n, int v);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr ins, int x, int y, int cx, int cy, uint f);
+    delegate bool EnumWindowsProc(IntPtr h, IntPtr lp);
+
+    public static int Hide(int targetPid) {
+        Type t = Type.GetTypeFromCLSID(new Guid("56FDF344-FD6D-11d0-958A-006097C9A090"));
+        ITaskbarList tbl = (ITaskbarList)Activator.CreateInstance(t);
+        tbl.HrInit();
+        int count = 0;
+        for (int attempt = 0; attempt < 30; attempt++) {
+            Thread.Sleep(300);
+            EnumWindows((h, lp) => {
+                uint wp; GetWindowThreadProcessId(h, out wp);
+                if ((int)wp == targetPid) {
+                    tbl.DeleteTab(h);
+                    int s = GetWindowLong(h, -20);
+                    s = (s & ~0x00040000) | 0x00000080;
+                    SetWindowLong(h, -20, s);
+                    SetWindowPos(h, IntPtr.Zero, 0, 0, 0, 0, 0x0027);
+                    count++;
+                }
+                return true;
+            }, IntPtr.Zero);
+            if (count > 0) break;
+        }
+        return count;
+    }
+}
+"@
+[WinHide]::Hide(${pid})
+`
+  const scriptPath = join(tmpdir(), `radarbet-hide-${pid}.ps1`)
+  writeFileSync(scriptPath, script, 'utf8')
+  const proc = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
+    windowsHide: true,
+  })
+  let out = ''
+  proc.stdout.on('data', (d: Buffer) => { out += d.toString() })
+  proc.stderr.on('data', (d: Buffer) => { out += d.toString() })
+  proc.on('close', (code: number) => {
+    console.log(`[chromeBridge] hideChromeFromTaskbar PID ${pid} — exit ${code} — output: "${out.trim()}"`)
+  })
+}
+
+async function getPuppeteer() {
+  const mod = await import('puppeteer-core')
+  return mod.default
 }
 
 // ─── Estado do browser ────────────────────────────────────────────────────────
 
-let browser:   Browser | null = null
-let listPage:  Page | null = null                        // sempre na /IP/B1
-const gamePages = new Map<string, Page>()                   // pageKey → Page (um por RadarPanel)
+let browser:    Browser | null = null
+let listPage:   Page | null = null
+let chromePid:  number | null = null
+const gamePages = new Map<string, Page>()
 
 export async function launchChrome(): Promise<void> {
   const executablePath = findChrome()
   if (!executablePath) throw new Error('Chrome não encontrado no sistema')
-
-  console.log('[chromeBridge] Lançando Chrome incognito...')
 
   const puppeteer = await getPuppeteer()
   browser = await puppeteer.launch({
@@ -50,18 +114,21 @@ export async function launchChrome(): Promise<void> {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-extensions',
-      '--window-size=800,600',
       '--start-minimized',
+      '--window-size=1,1',
+      '--window-position=-3200,-3200',
     ],
     defaultViewport: { width: 800, height: 600 },
   })
 
-  // Aba 1: lista de jogos ao vivo (nunca navega para fora de /IP/B1)
+  chromePid = browser.process()?.pid ?? null
+
   const pages = await browser.pages()
   listPage = pages[0] ?? await browser.newPage()
-  console.log('[chromeBridge] Aba 1 (lista): navegando para /IP/B1...')
   await listPage.goto('https://www.bet365.com/#/IP/B1', { waitUntil: 'domcontentloaded', timeout: 30_000 })
 
+  // Chama APÓS goto — janela do Chrome certamente existe e está estável
+  if (chromePid) hideChromeFromTaskbar(chromePid)
 }
 
 export function getListPage(): Page | null { return listPage }
@@ -115,7 +182,6 @@ export async function scrapeLiveGames(page: Page): Promise<unknown[]> {
           }
 
           const hasStream = !!fixture.querySelector('.ovm-VideoIconLabel, [class*="VideoIcon"]')
-
           results.push({ team1, team2, score, time, league, country, odds, hasStream })
         }
       }
@@ -149,7 +215,6 @@ export async function scrapeGameData(page: Page): Promise<unknown> {
         const el = document.querySelector('.ml1-SoccerClock_InjuryTime')
         const text = el?.textContent?.trim() ?? ''
         if (!text) return null
-        // "+7 Min." → "+7"
         return text.replace(/\s*Min\.?/i, '').trim() || null
       }
 
@@ -199,14 +264,12 @@ export async function scrapeGameData(page: Page): Promise<unknown> {
           const pod = el.closest('.gl-MarketGroupPod, .sip-MarketGroup')
           if (!pod) continue
           if (/parte|half/i.test(text)) halfContainers.push({ pod, label: text })
-          // Inclui TODOS os pods de "Encontro - Golos" (incluindo "Mais Opções")
           else if (/encontro|match|game/i.test(text)) matchContainers.push({ pod, label: text })
         }
 
         const targets = halfContainers.length > 0 ? halfContainers : matchContainers
         if (targets.length === 0) return null
 
-        // Merge linhas de todos os pods (principal + Mais Opções)
         const firstResult = parseGoalsPod(targets[0].pod, targets[0].label) as { label: string; isHalf: boolean; lines: { line: number; over: number | null; under: number | null }[] } | null
         if (!firstResult) return null
 
@@ -227,7 +290,6 @@ export async function scrapeGameData(page: Page): Promise<unknown> {
       }
 
       function readSuspended(): boolean {
-        // Verifica suspensão apenas dentro dos pods do mercado de golos
         const labelEls = document.querySelectorAll('.sip-MarketGroupButton_Text, .gl-MarketGroupButton_Text')
         for (const el of Array.from(labelEls)) {
           const text = el.textContent?.trim() ?? ''
@@ -273,9 +335,6 @@ export async function scrapeGameData(page: Page): Promise<unknown> {
 
 // ─── Navegação para jogo específico ──────────────────────────────────────────
 
-
-// ── API pública: navega uma página bet365 dedicada para o jogo ────────────────
-
 export async function navigateBet365GamePage(
   team1: string,
   team2: string,
@@ -283,7 +342,6 @@ export async function navigateBet365GamePage(
 ): Promise<boolean> {
   if (!browser) { console.error('[chromeBridge] browser não iniciado'); return false }
 
-  // Reutiliza página existente se o jogo já está carregado
   const existing = gamePages.get(pageKey)
   if (existing && !existing.isClosed()) {
     console.log('[chromeBridge] Reutilizando página para:', pageKey)
@@ -291,12 +349,6 @@ export async function navigateBet365GamePage(
   }
 
   if (!listPage) return false
-
-  // Usa listPage (já tem todos os jogos carregados) como router:
-  // 1. Encontra o jogo e clica → listPage navega para o URL do jogo
-  // 2. Captura o URL do jogo
-  // 3. Volta listPage para /IP/B1
-  // 4. Nova página navega directamente para o URL capturado
 
   const marked = await listPage.evaluate((t1: string, t2: string): boolean => {
     function normalize(s: string) { return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase() }
@@ -324,7 +376,6 @@ export async function navigateBet365GamePage(
     return false
   }
 
-  // Restaura/foca a janela antes de clicar — a SPA da bet365 requer foco no documento
   let cdpSession: Awaited<ReturnType<Page['createCDPSession']>> | null = null
   let windowId: number | null = null
   let wasMinimized = false
@@ -342,14 +393,12 @@ export async function navigateBet365GamePage(
     console.warn('[chromeBridge] CDP focus falhou (continuando):', e)
   }
 
-  // Clica no elemento marcado (Puppeteer page.click — requer janela ativa)
   const beforeUrl = listPage.url()
   await listPage.click('[data-rb-nav]')
   await listPage.evaluate(() => {
     document.querySelector('[data-rb-nav]')?.removeAttribute('data-rb-nav')
   }).catch(() => {})
 
-  // Polling pela mudança de URL (até 3s)
   let gameUrl = listPage.url()
   for (let i = 0; i < 30; i++) {
     if (gameUrl !== beforeUrl) break
@@ -358,7 +407,6 @@ export async function navigateBet365GamePage(
   }
   console.log('[chromeBridge] URL capturada:', gameUrl)
 
-  // Re-minimiza antes de qualquer return
   const reMinimize = async () => {
     if (wasMinimized && cdpSession && windowId !== null) {
       await cdpSession.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } }).catch(() => {})
@@ -372,16 +420,17 @@ export async function navigateBet365GamePage(
     return false
   }
 
-  // Volta listPage para a lista
   await listPage.goto('https://www.bet365.com/#/IP/B1', { waitUntil: 'domcontentloaded', timeout: 10_000 })
   await reMinimize()
+  // Chrome volta ao estado normal/minimizado — re-aplica hide pois o restore pode ter recolocado na taskbar
+  if (chromePid) hideChromeFromTaskbar(chromePid)
 
-  // Cria nova página e navega directamente para o URL do jogo
   const page = await browser.newPage()
   await page.goto(gameUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 })
   console.log('[chromeBridge] Nova página para:', pageKey, '→', gameUrl)
+  // Nova aba pode ter aberto nova janela Chrome — garante que está escondida
+  if (chromePid) hideChromeFromTaskbar(chromePid)
 
-  // Ativa a view ML1 (stats/odds/clock) — a página abre por padrão na view de vídeo
   await page.waitForSelector('[data-mbl-variant="ML1"]', { timeout: 8_000 })
     .then(() =>
       page.evaluate(() => {
