@@ -57,10 +57,9 @@ function getLancesWins(): BrowserWindow[] {
 function createOverlay(): void {
   overlayWin = new BrowserWindow({
     width: 380, height: 520, minWidth: 280, minHeight: 380,
-    frame: false, transparent: true, alwaysOnTop: true, resizable: true,
+    frame: false, transparent: true, resizable: true,
     webPreferences: { preload: join(__dirname, '../preload/overlay.js'), contextIsolation: true, sandbox: false },
   })
-  overlayWin.setAlwaysOnTop(true, 'screen-saver')
   isDev
     ? overlayWin.loadURL(rendererUrl())
     : overlayWin.loadFile(join(__dirname, '../renderer/index.html'))
@@ -85,10 +84,9 @@ function createGameWindow(game: unknown): void {
   // Cria nova janela de jogo
   const win = new BrowserWindow({
     width: 540, height: 440, minWidth: 280, minHeight: 380,
-    frame: false, transparent: true, alwaysOnTop: true, resizable: true, show: false,
+    frame: false, transparent: true, resizable: true, show: false,
     webPreferences: { preload: join(__dirname, '../preload/overlay.js'), contextIsolation: true, sandbox: false },
   })
-  win.setAlwaysOnTop(true, 'screen-saver')
   win.once('ready-to-show', () => win.show())
   isDev
     ? win.loadURL(rendererUrl({ mode: 'game' }))
@@ -132,10 +130,9 @@ function createFeatureWindow(gameWinId: number, featureId: string): void {
   const [w, h] = FEATURE_SIZES[featureId] ?? [480, 380]
   const win = new BrowserWindow({
     width: w, height: h, minWidth: 200, minHeight: 200,
-    frame: false, transparent: true, alwaysOnTop: true, resizable: true, show: false,
+    frame: false, transparent: true, resizable: true, show: false,
     webPreferences: { preload: join(__dirname, '../preload/overlay.js'), contextIsolation: true, sandbox: false },
   })
-  win.setAlwaysOnTop(true, 'screen-saver')
   win.once('ready-to-show', () => {
     console.log('[main] ready-to-show para:', compositeKey)
     win.show()
