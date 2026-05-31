@@ -1,11 +1,12 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Login }         from './screens/Login'
-import { Dashboard }     from './screens/Dashboard'
-import { GameMenu }      from './screens/GameMenu'
-import { RadarPanel }    from './screens/RadarPanel'
-import { Feature2Panel } from './screens/Feature2Panel'
-import { LancesPanel }   from './screens/LancesPanel'
-import { RfListPanel }   from './screens/RfListPanel'
+import { Login }            from './screens/Login'
+import { Dashboard }        from './screens/Dashboard'
+import { GameMenu }         from './screens/GameMenu'
+import { RadarPanel }       from './screens/RadarPanel'
+import { Feature2Panel }    from './screens/Feature2Panel'
+import { LancesPanel }      from './screens/LancesPanel'
+import { LancesPopupPanel } from './screens/LancesPopupPanel'
+import { RfListPanel }      from './screens/RfListPanel'
 import type { LiveGame } from './electron.d'
 import './App.css'
 
@@ -68,6 +69,10 @@ export default function App() {
 
   if (MODE === 'lances') {
     return <div className="radarbet-root"><LancesPanel onBack={() => window.close()} /></div>
+  }
+
+  if (MODE === 'lances-popup') {
+    return <div className="radarbet-root"><LancesPopupPanel /></div>
   }
 
   if (MODE === 'game') {

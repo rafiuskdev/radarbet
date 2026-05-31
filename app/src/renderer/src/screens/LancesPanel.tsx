@@ -85,7 +85,7 @@ export function LancesPanel({ onBack }: Props) {
   const [lineCount,    setLineCount]    = useState<LineOption>('10')
   const [showSettings, setShowSettings] = useState(false)
   const [opacity,      setOpacity]      = useState(1.0)
-  const [fontSize,     setFontSize]     = useState(12)
+  const [fontSize,     setFontSize]     = useState(14)
 
   const staleRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevTopRef = useRef('')
@@ -149,6 +149,9 @@ export function LancesPanel({ onBack }: Props) {
         <div className="lances-header-info">
           <span className="lances-teams">{home || '…'} × {away || '…'}</span>
           <span className={`lances-score${isStale ? ' lances-score-stale' : ''}`}>{score}</span>
+          {events[0]?.minute && (
+            <span className="lances-header-time">{events[0].minute}'</span>
+          )}
         </div>
         <button
           className={`rb-btn-switch rb-no-drag${showSettings ? ' rb-btn-active' : ''}`}

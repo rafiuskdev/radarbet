@@ -137,12 +137,20 @@ export async function scrapeGameData(page: Page): Promise<unknown> {
   try {
     return await page.evaluate(() => {
       function readGameTime(): string | null {
-        const sels = ['.lv-ScoreBasedClockPart', '.lv-ClockBasedTime_Clocks', '[class*="lv-ClockBased"]', '[class*="ScoreClock"]']
+        const sels = ['.ml1-SoccerClock_Clock', '.lv-ScoreBasedClockPart', '.lv-ClockBasedTime_Clocks', '[class*="lv-ClockBased"]', '[class*="ScoreClock"]']
         for (const s of sels) {
           const el = document.querySelector(s)
           if (el?.textContent?.trim()) return el.textContent.trim()
         }
         return null
+      }
+
+      function readExtraTime(): string | null {
+        const el = document.querySelector('.ml1-SoccerClock_InjuryTime')
+        const text = el?.textContent?.trim() ?? ''
+        if (!text) return null
+        // "+7 Min." → "+7"
+        return text.replace(/\s*Min\.?/i, '').trim() || null
       }
 
       function readTotalGoals(): number | null {
@@ -218,6 +226,14 @@ export async function scrapeGameData(page: Page): Promise<unknown> {
         return { ...firstResult, lines: allLines }
       }
 
+      function readSuspended(): boolean {
+        return !!(
+          document.querySelector('.gl-ParticipantOddsOnly_Suspended') ||
+          document.querySelector('.gl-ParticipantBorderless_Suspended') ||
+          document.querySelector('.srb-ParticipantLabelCentered_Suspended')
+        )
+      }
+
       function readNextGoalOdds(): unknown {
         for (const el of Array.from(document.querySelectorAll('.sip-MarketGroupButton_Text, .gl-MarketGroupButton_Text'))) {
           const text = el.textContent?.toLowerCase() ?? ''
@@ -237,7 +253,7 @@ export async function scrapeGameData(page: Page): Promise<unknown> {
         return null
       }
 
-      return { time: readGameTime(), score: readTotalGoals(), goals: readGoalsMarket(), nextGoal: readNextGoalOdds(), updatedAt: Date.now() }
+      return { time: readGameTime(), extraTime: readExtraTime(), suspended: readSuspended(), score: readTotalGoals(), goals: readGoalsMarket(), nextGoal: readNextGoalOdds(), updatedAt: Date.now() }
     })
   } catch (e) {
     console.error('[chromeBridge] Erro em scrapeGameData:', e)
@@ -298,27 +314,72 @@ export async function navigateBet365GamePage(
     return false
   }
 
-  // Clica na listPage para capturar URL do jogo via SPA
+  // Restaura/foca a janela antes de clicar — a SPA da bet365 requer foco no documento
+  let cdpSession: Awaited<ReturnType<Page['createCDPSession']>> | null = null
+  let windowId: number | null = null
+  let wasMinimized = false
+  try {
+    cdpSession = await listPage.createCDPSession()
+    const winInfo = await cdpSession.send('Browser.getWindowForTarget') as { windowId: number; bounds: { windowState: string } }
+    windowId = winInfo.windowId
+    wasMinimized = winInfo.bounds.windowState === 'minimized'
+    if (wasMinimized) {
+      await cdpSession.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } })
+    }
+    await listPage.bringToFront()
+    await new Promise(r => setTimeout(r, 300))
+  } catch (e) {
+    console.warn('[chromeBridge] CDP focus falhou (continuando):', e)
+  }
+
+  // Clica no elemento marcado (Puppeteer page.click — requer janela ativa)
   const beforeUrl = listPage.url()
   await listPage.click('[data-rb-nav]')
   await listPage.evaluate(() => {
     document.querySelector('[data-rb-nav]')?.removeAttribute('data-rb-nav')
   }).catch(() => {})
 
-  // Aguarda mudança de URL (SPA hash navigation)
-  await new Promise(r => setTimeout(r, 800))
-  const gameUrl = listPage.url()
+  // Polling pela mudança de URL (até 3s)
+  let gameUrl = listPage.url()
+  for (let i = 0; i < 30; i++) {
+    if (gameUrl !== beforeUrl) break
+    await new Promise(r => setTimeout(r, 100))
+    gameUrl = listPage.url()
+  }
   console.log('[chromeBridge] URL capturada:', gameUrl)
 
-  // Volta listPage para a lista
-  if (gameUrl !== beforeUrl) {
-    await listPage.goto('https://www.bet365.com/#/IP/B1', { waitUntil: 'domcontentloaded', timeout: 10_000 })
+  // Re-minimiza antes de qualquer return
+  const reMinimize = async () => {
+    if (wasMinimized && cdpSession && windowId !== null) {
+      await cdpSession.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } }).catch(() => {})
+    }
+    await cdpSession?.detach().catch(() => {})
   }
+
+  if (gameUrl === beforeUrl) {
+    console.error('[chromeBridge] Navegação falhou — URL não mudou para:', team1, 'x', team2)
+    await reMinimize()
+    return false
+  }
+
+  // Volta listPage para a lista
+  await listPage.goto('https://www.bet365.com/#/IP/B1', { waitUntil: 'domcontentloaded', timeout: 10_000 })
+  await reMinimize()
 
   // Cria nova página e navega directamente para o URL do jogo
   const page = await browser.newPage()
   await page.goto(gameUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 })
   console.log('[chromeBridge] Nova página para:', pageKey, '→', gameUrl)
+
+  // Ativa a view ML1 (stats/odds/clock) — a página abre por padrão na view de vídeo
+  await page.waitForSelector('[data-mbl-variant="ML1"]', { timeout: 8_000 })
+    .then(() =>
+      page.evaluate(() => {
+        const btn = document.querySelector('[data-mbl-variant="ML1"]') as HTMLElement | null
+        btn?.click()
+      })
+    )
+    .catch(() => console.warn('[chromeBridge] ML1 button não encontrado:', pageKey))
 
   gamePages.set(pageKey, page)
   return true

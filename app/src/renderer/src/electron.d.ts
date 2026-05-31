@@ -1,5 +1,7 @@
 export interface GameData {
   time: string | null
+  extraTime: string | null
+  suspended: boolean
   score: number | null
   goals: {
     label: string

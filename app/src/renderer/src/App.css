@@ -703,6 +703,30 @@ body {
   animation: rbFlashOverlay 0.9s ease-out forwards;
 }
 
+/* Corpo abaixo da topbar */
+.rb-body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Overlay de suspensão */
+.rb-suspended-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 20, 28, 0.80);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  z-index: 20;
+  pointer-events: none;
+  filter: grayscale(1);
+}
+
 /* Topbar do radar */
 .radar-topbar {
   display: flex;
@@ -786,7 +810,7 @@ body {
 .rb-topbar-time {
   font-size: 10px;
   font-weight: 700;
-  color: #3a5060;
+  color: #fff;
   flex-shrink: 0;
 }
 
@@ -863,6 +887,7 @@ body {
 
 .rb-timer-icon { font-size: 10px; color: #3a4a5a; }
 .rb-timer      { font-size: 11px; font-weight: 700; color: #4a5a6a; letter-spacing: 0.5px; }
+.rb-extra-time { font-size: 10px; font-weight: 700; color: #f08030; margin-left: 4px; }
 
 .rb-row-nx {
   padding-top: 5px;
@@ -1153,6 +1178,7 @@ body {
 }
 
 .lances-score-stale { color: var(--text-muted); }
+.lances-header-time { font-size: 10px; font-weight: 700; color: #a78bfa; letter-spacing: 0.5px; }
 
 /* Settings panel */
 .lances-settings {
