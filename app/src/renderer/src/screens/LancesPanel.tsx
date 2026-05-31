@@ -11,14 +11,15 @@ const LINE_HEIGHTS: Record<LineOption, number> = {
   '10':  355,
   'all': 560,
 }
-const SETTINGS_EXTRA = 118  // altura do painel de settings expandido
+const SETTINGS_EXTRA = 146  // 4 rows × ~28px + padding
 
 // ── Cores ─────────────────────────────────────────────────────────────────────
 
 function getColor(iconType: string): string {
-  if (iconType === 'homeattack' || iconType === 'awayattack')           return '#f59e0b'
-  if (iconType === 'homesafe'   || iconType === 'awaysafe')             return '#10b981'
-  if (iconType === 'commentary' || iconType === 'dangerousfreekick')    return '#ef4444'
+  if (iconType === 'homeattack' || iconType === 'awayattack')                          return '#f59e0b'
+  if (iconType === 'homedanger' || iconType === 'awaydanger')                          return '#ef4444'
+  if (iconType === 'homesafe'   || iconType === 'awaysafe')                            return '#10b981'
+  if (iconType === 'commentary' || iconType === 'dangerousfreekick')                   return '#ef4444'
   if (iconType === 'shotontarget')  return '#10b981'
   if (iconType === 'shotofftarget') return '#f59e0b'
   if (iconType === 'yellowcard')    return '#fcd34d'
@@ -27,11 +28,12 @@ function getColor(iconType: string): string {
   return '#6b7280'
 }
 
-// Ícone diferenciado por tipo E por lado (home → ▶, away → ◀)
-function getDot(iconType: string, side: 'home' | 'away' | 'neutral'): string {
-  if (iconType === 'homeattack') return '▶'
-  if (iconType === 'awayattack') return '◀'
-  if (iconType === 'homesafe' || iconType === 'awaysafe')           return '■'
+function getDot(iconType: string): string {
+  if (iconType === 'homeattack')                              return '▶'
+  if (iconType === 'homedanger')                              return '⚡'
+  if (iconType === 'awayattack')                              return '◀'
+  if (iconType === 'awaydanger')                              return '⚡'
+  if (iconType === 'homesafe' || iconType === 'awaysafe')     return '■'
   if (iconType === 'commentary' || iconType === 'dangerousfreekick') return '⚡'
   if (iconType === 'shotontarget')  return '●'
   if (iconType === 'shotofftarget') return '○'
@@ -54,8 +56,8 @@ function getSide(
   home:     string,
   away:     string,
 ): 'home' | 'away' | 'neutral' {
-  if (iconType === 'homeattack' || iconType === 'homesafe') return 'home'
-  if (iconType === 'awayattack' || iconType === 'awaysafe') return 'away'
+  if (iconType === 'homeattack' || iconType === 'homesafe' || iconType === 'homedanger') return 'home'
+  if (iconType === 'awayattack' || iconType === 'awaysafe' || iconType === 'awaydanger') return 'away'
   if (!home && !away) return 'neutral'
   const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
   const t = norm(text)
@@ -66,7 +68,6 @@ function getSide(
 
 // ── Componente ────────────────────────────────────────────────────────────────
 
-// Parse "45' + 2'" → 47, "30'" → 30
 function parseMinute(minute: string): number {
   const base  = parseInt(minute.match(/^(\d+)/)?.[1] ?? '0')
   const extra = parseInt(minute.match(/\+\s*(\d+)/)?.[1] ?? '0')
@@ -89,7 +90,6 @@ export function LancesPanel({ onBack }: Props) {
   const staleRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevTopRef = useRef('')
 
-  // Último ataque perigoso por lado (iconType === 'commentary')
   const lastAP = useMemo(() => {
     const events = matchState?.events ?? []
     const home   = matchState?.homeTeam ?? ''
@@ -98,7 +98,7 @@ export function LancesPanel({ onBack }: Props) {
     let awayMin: number | null = null
 
     for (const ev of events) {
-      if (ev.iconType !== 'commentary' && ev.iconType !== 'dangerousfreekick') continue
+      if (!['commentary', 'dangerousfreekick', 'homedanger', 'awaydanger'].includes(ev.iconType)) continue
       const side = getSide(ev.iconType, ev.text, home, away)
       if (side === 'home' && homeMin === null) homeMin = parseMinute(ev.minute)
       if (side === 'away' && awayMin === null) awayMin = parseMinute(ev.minute)
@@ -130,7 +130,6 @@ export function LancesPanel({ onBack }: Props) {
     return () => { off(); offNotFound(); offChanged(); if (staleRef.current) clearTimeout(staleRef.current) }
   }, [])
 
-  // Redimensiona janela ao mudar linhas ou abrir/fechar settings
   useEffect(() => {
     const h = LINE_HEIGHTS[lineCount] + (showSettings ? SETTINGS_EXTRA : 0)
     window.electronAPI.resizeWindow(320, h)
@@ -163,6 +162,15 @@ export function LancesPanel({ onBack }: Props) {
       {/* Painel de settings */}
       {showSettings && (
         <div className="lances-settings rb-no-drag">
+          {/* Popup */}
+          <div className="rsp-row">
+            <span className="rsp-label">Popup</span>
+            <button
+              className="lances-line-btn"
+              style={{ flex: 'none', padding: '3px 10px' }}
+              onClick={() => window.electronAPI.openFeatureWindow('lances-popup')}
+            >Abrir</button>
+          </div>
           {/* Linhas */}
           <div className="rsp-row">
             <span className="rsp-label">Linhas</span>
@@ -253,15 +261,12 @@ export function LancesPanel({ onBack }: Props) {
           displayed.map((ev, i) => {
             const side    = getSide(ev.iconType, ev.text, home, away)
             const color   = getColor(ev.iconType)
-            const dot     = getDot(ev.iconType, side)
+            const dot     = getDot(ev.iconType)
             const evOpa   = getOpacity(ev.iconType)
             const timeStr = ev.minute + (ev.seconds ? ` ${ev.seconds}` : '')
 
             return (
               <div key={i} className={`lances-row lances-row-${side}`} style={{ opacity: evOpa }}>
-                {/* Ordem DOM: [time] [dot] [text]
-                    home (row):         time · dot · text
-                    away (row-reverse): text · dot · time  */}
                 <span className="lances-time">{timeStr}</span>
                 <span className="lances-dot" style={{ color }}>{dot}</span>
                 <span className="lances-text" style={{ color }}>{ev.text}</span>

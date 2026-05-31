@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { launchChrome, closeBrowser, scrapeLiveGames, scrapeGameData, navigateBet365GamePage, closeBet365GamePage, getBet365GamePage, getListPage } from './chromeBridge'
-import { launchRfChrome, navigateToRfGame, scrapeRfMatchState, scrapeRfGames, closeRfGamePage, closeRfBrowser } from './radarFutebolBridge'
+import { launchRfChrome, navigateToRfGame, scrapeRfMatchState, closeRfGamePage, closeRfBrowser, onGamesUpdate } from './radarFutebolBridge'
 
 let overlayWin: BrowserWindow | null = null
 
@@ -16,10 +16,9 @@ let latestGameData:  unknown   = null
 let latestLiveGames: unknown[] = []
 let latestRfGames:   unknown[] = []
 
-let liveGamesInterval:  ReturnType<typeof setInterval> | null = null
-let radarPollInterval:  ReturnType<typeof setInterval> | null = null
-let rfListInterval:     ReturnType<typeof setInterval> | null = null
-let rfMatchInterval:    ReturnType<typeof setInterval> | null = null
+let liveGamesInterval: ReturnType<typeof setInterval> | null = null
+let radarPollInterval: ReturnType<typeof setInterval> | null = null
+let rfMatchInterval:   ReturnType<typeof setInterval> | null = null
 let rfNavEpoch = 0
 
 const isDev = process.env['ELECTRON_RENDERER_URL'] !== undefined
@@ -112,9 +111,10 @@ function createGameWindow(game: unknown): void {
 // ── Feature windows ───────────────────────────────────────────────────────────
 
 const FEATURE_SIZES: Record<string, [number, number]> = {
-  radar:    [280, 450],
-  feature2: [480, 380],
-  lances:   [320, 355],
+  radar:         [280, 450],
+  feature2:      [480, 380],
+  lances:        [320, 355],
+  'lances-popup': [320, 84],    // 3 rows × 28px
 }
 
 function createFeatureWindow(gameWinId: number, featureId: string): void {
@@ -147,8 +147,13 @@ function createFeatureWindow(gameWinId: number, featureId: string): void {
   featureWins.set(compositeKey, win)
   win.on('closed', () => {
     featureWins.delete(compositeKey)
-    if (featureId === 'radar')  closeBet365GamePage(compositeKey).catch(() => {})
-    if (featureId === 'lances') closeRfGamePage(compositeKey).catch(() => {})
+    if (featureId === 'radar') closeBet365GamePage(compositeKey).catch(() => {})
+    if (featureId === 'lances') {
+      closeRfGamePage(compositeKey).catch(() => {})
+      // Fecha o popup se estiver aberto
+      const popupWin = featureWins.get(compositeKey + '-popup')
+      if (popupWin && !popupWin.isDestroyed()) popupWin.close()
+    }
   })
 }
 
@@ -174,10 +179,30 @@ async function startChrome(): Promise<void> {
 function stopChrome(): void {
   if (liveGamesInterval) { clearInterval(liveGamesInterval); liveGamesInterval = null }
   if (radarPollInterval) { clearInterval(radarPollInterval); radarPollInterval = null }
-  if (rfListInterval)    { clearInterval(rfListInterval);    rfListInterval    = null }
   if (rfMatchInterval)   { clearInterval(rfMatchInterval);   rfMatchInterval   = null }
   closeBrowser()
   closeRfBrowser()
+}
+
+function startRfMatchPolling(): void {
+  if (rfMatchInterval) return
+  rfMatchInterval = setInterval(async () => {
+    let hasActive = false
+    for (const [key, win] of featureWins) {
+      if (!key.endsWith(':lances') || win.isDestroyed()) continue
+      hasActive = true
+      const state = await scrapeRfMatchState(key)
+      if (state) {
+        win.webContents.send('rfMatchUpdate', state)
+        const popupWin = featureWins.get(key + '-popup')
+        if (popupWin && !popupWin.isDestroyed()) popupWin.webContents.send('rfMatchUpdate', state)
+      }
+    }
+    if (!hasActive && rfMatchInterval) {
+      clearInterval(rfMatchInterval)
+      rfMatchInterval = null
+    }
+  }, 1500)
 }
 
 // Polling do radar de odds — cada janela *:radar tem a sua própria página bet365
@@ -203,39 +228,14 @@ function startRadarPolling(): void {
   }, 2000)
 }
 
-function startRfListPolling(): void {
-  if (rfListInterval) return
-  rfListInterval = setInterval(async () => {
-    const lWins = getLancesWins()
-    if (lWins.length === 0) return
-    const games = await scrapeRfGames()
-    if (games.length > 0) {
-      latestRfGames = games
-      lWins.forEach(w => w.webContents.send('rfGamesUpdate', games))
-    }
-  }, 10_000)
-}
-
-function startRfMatchPolling(): void {
-  if (rfMatchInterval) return
-  rfMatchInterval = setInterval(async () => {
-    let hasActive = false
-    for (const [key, win] of featureWins) {
-      if (!key.endsWith(':lances') || win.isDestroyed()) continue
-      hasActive = true
-      const state = await scrapeRfMatchState(key)
-      if (state) win.webContents.send('rfMatchUpdate', state)
-    }
-    // Para polling quando não há painéis de lances abertos
-    if (!hasActive && rfMatchInterval) {
-      clearInterval(rfMatchInterval)
-      rfMatchInterval = null
-    }
-  }, 1500)
-}
-
 // ── IPC ───────────────────────────────────────────────────────────────────────
 function setupIPC(): void {
+  // SSE push: lista de jogos RF sem polling
+  onGamesUpdate(games => {
+    latestRfGames = games
+    getLancesWins().forEach(w => w.webContents.send('rfGamesUpdate', games))
+  })
+
   ipcMain.handle('getLiveGames', () => {
     console.log('[main] getLiveGames chamado, retornando', latestLiveGames.length, 'jogos')
     return latestLiveGames
@@ -302,6 +302,7 @@ function setupIPC(): void {
       const compositeKey = `${gwId}:lances`
       if (g?.team1 && g?.team2) {
         featureWins.get(compositeKey)?.webContents.send('rfGameChanged')
+        featureWins.get(compositeKey + '-popup')?.webContents.send('rfGameChanged')
         const epoch = ++rfNavEpoch
         launchRfChrome()
           .then(async () => {
@@ -323,7 +324,6 @@ function setupIPC(): void {
   ipcMain.handle('openRfGame', async (_e, rfGame: { team1: string; team2: string }) => {
     const nav = await navigateToRfGame(rfGame.team1, rfGame.team2)
     if (!nav.ok) return { ok: false, error: nav.reason }
-    startRfMatchPolling()
     return { ok: true }
   })
 
