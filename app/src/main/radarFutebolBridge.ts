@@ -67,8 +67,9 @@ export async function launchRfChrome(): Promise<void> {
     executablePath,
     headless: false,
     args: ['--incognito', '--disable-blink-features=AutomationControlled',
-           '--no-first-run', '--no-default-browser-check'],
-    defaultViewport: { width: 1280, height: 800 },
+           '--no-first-run', '--no-default-browser-check',
+           '--window-size=800,600', '--start-minimized'],
+    defaultViewport: { width: 800, height: 600 },
   })
 
   const pages = await rfBrowser.pages()
