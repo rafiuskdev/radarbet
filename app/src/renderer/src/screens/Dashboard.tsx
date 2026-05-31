@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import type { LiveGame } from '../electron.d'
+import { SettingsPanel } from './SettingsPanel'
 
 // ─── Skeleton de carregamento ─────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ export function Dashboard({ onSelectGame }: Props) {
   const [search,          setSearch]          = useState('')
   const [selectedLeague,  setSelectedLeague]  = useState('all')
   const [selectedCountry, setSelectedCountry] = useState('all')
+  const [showSettings,    setShowSettings]    = useState(false)
   // Para adicionar novos filtros: declare mais estados aqui e adicione ao useMemo abaixo
 
   useEffect(() => {
@@ -65,6 +67,14 @@ export function Dashboard({ onSelectGame }: Props) {
   const isNotConnected = liveGames === null
   const isLoading      = liveGames !== null && liveGames.length === 0
 
+  if (showSettings) {
+    return (
+      <div className="screen-dashboard">
+        <SettingsPanel onBack={() => setShowSettings(false)} />
+      </div>
+    )
+  }
+
   return (
     <div className="screen-dashboard">
       {/* Header */}
@@ -76,6 +86,7 @@ export function Dashboard({ onSelectGame }: Props) {
           </span>
         )}
         <span className="rb-row-spacer" />
+        <button className="rb-btn-switch rb-no-drag" title="Configurações" onClick={() => setShowSettings(true)}>⚙</button>
         <button className="rb-btn-switch rb-no-drag" title="Minimizar" onClick={() => window.electronAPI.minimizeWindow()}>−</button>
         <button className="rb-close rb-no-drag" onClick={() => window.close()}>×</button>
       </header>

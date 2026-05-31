@@ -54,6 +54,7 @@ export interface RfMatchState {
   score:    string
   homeTeam: string
   awayTeam: string
+  clock:    string
 }
 
 export interface RfGame {
@@ -93,6 +94,7 @@ declare global {
       onRfMatchUpdate:   (cb: (state: RfMatchState) => void) => () => void
       onRfGameNotFound:  (cb: (reason: 'not-found' | 'no-radar') => void) => () => void
       onRfGameChanged:   (cb: () => void) => () => void
+      onRfExtraTime:     (cb: (v: string | null) => void) => () => void
       getRfGames:       () => Promise<RfGame[]>
       onRfGamesUpdate:  (cb: (games: RfGame[]) => void) => () => void
       openRfGame:       (rfGame: { team1: string; team2: string }) => Promise<{ ok: boolean; error?: string; gameKey?: string }>

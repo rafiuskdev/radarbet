@@ -114,7 +114,7 @@ const FEATURE_SIZES: Record<string, [number, number]> = {
   radar:         [300, 300],
   feature2:      [480, 380],
   lances:        [320, 355],
-  'lances-popup': [320, 100],   // 3 rows × 34px
+  'lances-popup': [320, 124],   // 3 rows × 34px + info bar 22px
 }
 
 function createFeatureWindow(gameWinId: number, featureId: string): void {
@@ -128,8 +128,9 @@ function createFeatureWindow(gameWinId: number, featureId: string): void {
 
   console.log('[main] createFeatureWindow: criando janela:', compositeKey)
   const [w, h] = FEATURE_SIZES[featureId] ?? [480, 380]
+  const minH = featureId === 'lances-popup' ? 30 : 200
   const win = new BrowserWindow({
-    width: w, height: h, minWidth: 200, minHeight: 200,
+    width: w, height: h, minWidth: 200, minHeight: minH,
     frame: false, transparent: true, resizable: true, show: false,
     webPreferences: { preload: join(__dirname, '../preload/overlay.js'), contextIsolation: true, sandbox: false },
   })
@@ -205,6 +206,8 @@ function startRfMatchPolling(): void {
   }, 1500)
 }
 
+const lastExtraTimeByGw = new Map<string, string | null>()
+
 // Polling do radar de odds — cada janela *:radar tem a sua própria página bet365
 function startRadarPolling(): void {
   if (radarPollInterval) return
@@ -219,13 +222,18 @@ function startRadarPolling(): void {
       if (data) {
         latestGameData = data
         win.webContents.send('gameDataUpdate', data)
-        // Envia tempo do jogo também ao painel de lances do mesmo jogo
-        const gwId = key.split(':')[0]
-        const gameTime = { time: data.time ?? null, extraTime: data.extraTime ?? null }
-        const lancesWin = featureWins.get(`${gwId}:lances`)
-        if (lancesWin && !lancesWin.isDestroyed()) lancesWin.webContents.send('gameTimeUpdate', gameTime)
-        const lancesPopup = featureWins.get(`${gwId}:lances-popup`)
-        if (lancesPopup && !lancesPopup.isDestroyed()) lancesPopup.webContents.send('gameTimeUpdate', gameTime)
+
+        // Propaga acréscimos para as janelas de lances do mesmo jogo
+        const gwId      = key.replace(':radar', '')
+        const newExtra  = (data as { extraTime?: string | null }).extraTime ?? null
+        const prevExtra = lastExtraTimeByGw.get(gwId) ?? null
+        if (newExtra !== prevExtra) {
+          lastExtraTimeByGw.set(gwId, newExtra)
+          const lancesWin   = featureWins.get(`${gwId}:lances`)
+          const lancesPopup = featureWins.get(`${gwId}:lances-popup`)
+          if (lancesWin   && !lancesWin.isDestroyed())   lancesWin.webContents.send('rfExtraTime', newExtra)
+          if (lancesPopup && !lancesPopup.isDestroyed()) lancesPopup.webContents.send('rfExtraTime', newExtra)
+        }
       }
     }
     if (!hasActive && radarPollInterval) {
@@ -257,7 +265,7 @@ function setupIPC(): void {
 
   ipcMain.handle('resizeWindow', (event, width: number, height: number) => {
     BrowserWindow.fromWebContents(event.sender)
-      ?.setSize(Math.max(200, Math.round(width)), Math.max(150, Math.round(height)))
+      ?.setSize(Math.max(200, Math.round(width)), Math.max(30, Math.round(height)))
   })
 
   ipcMain.handle('minimizeWindow', (event) => {

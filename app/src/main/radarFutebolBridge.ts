@@ -80,6 +80,7 @@ export interface RfMatchState {
   score:    string
   homeTeam: string
   awayTeam: string
+  clock:    string
 }
 
 export type RfNavResult =
@@ -404,6 +405,7 @@ export async function scrapeRfMatchState(pageKey: string): Promise<RfMatchState 
       const score    = (document.querySelector('[data-push="score"]')    as HTMLElement | null)?.textContent?.trim() ?? ''
       const homeTeam = (document.querySelector('[data-push="homeName"]') as HTMLElement | null)?.textContent?.trim() ?? ''
       const awayTeam = (document.querySelector('[data-push="awayName"]') as HTMLElement | null)?.textContent?.trim() ?? ''
+      const clock    = (document.querySelector('[data-push="clock"]')    as HTMLElement | null)?.textContent?.trim() ?? ''
       const events: Array<{ minute: string; seconds: string; iconType: string; text: string }> = []
       for (const li of Array.from(document.querySelectorAll('#box_commentaries li')) as HTMLLIElement[]) {
         const minute   = li.querySelector('.minute')?.textContent?.trim()   ?? ''
@@ -415,7 +417,7 @@ export async function scrapeRfMatchState(pageKey: string): Promise<RfMatchState 
         if (!text) continue
         events.push({ minute, seconds, iconType, text })
       }
-      return { events, score, homeTeam, awayTeam }
+      return { events, score, homeTeam, awayTeam, clock }
     })
   } catch (e) {
     console.error('[rfBridge] Erro em scrapeRfMatchState:', pageKey, e)

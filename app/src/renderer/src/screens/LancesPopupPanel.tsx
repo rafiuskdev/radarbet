@@ -1,18 +1,23 @@
 import { useState, useEffect, useRef } from 'react'
 import type { RfMatchState } from '../electron.d'
+import { SKEYS, readFloat, readStr, writeSetting } from '../lib/settings'
+import { useRfClock } from '../lib/useRfClock'
 
 type PopupLineOption = '1' | '2' | '3' | '5'
+const POPUP_LINE_OPTS = ['1', '2', '3', '5'] as const
 
-const POPUP_ROW_H = 34
+const POPUP_ROW_H  = 34
+const POPUP_INFO_H = 22
 
 // Cor de fundo da janela inteira baseada no evento mais recente
-function getWindowBg(iconType?: string): string {
-  if (!iconType)                                                              return 'rgba(15, 15, 25, 0.95)'
-  if (iconType === 'commentary' || iconType === 'dangerousfreekick')         return 'rgba(160, 20, 20, 0.95)'
-  if (iconType === 'homeattack' || iconType === 'awayattack')                return 'rgba(155, 85, 5, 0.95)'
-  if (iconType === 'shotontarget' || iconType === 'shotofftarget')           return 'rgba(155, 85, 5, 0.90)'
-  if (iconType === 'homesafe' || iconType === 'awaysafe')                    return 'rgba(10, 110, 60, 0.95)'
-  return 'rgba(20, 20, 35, 0.92)'
+function getWindowBg(iconType?: string, alpha = 0.92): string {
+  const a = alpha.toFixed(2)
+  if (!iconType)                                                              return `rgba(15, 15, 25, ${a})`
+  if (iconType === 'commentary' || iconType === 'dangerousfreekick')         return `rgba(160, 20, 20, ${a})`
+  if (iconType === 'homeattack' || iconType === 'awayattack')                return `rgba(155, 85, 5, ${a})`
+  if (iconType === 'shotontarget' || iconType === 'shotofftarget')           return `rgba(155, 85, 5, ${a})`
+  if (iconType === 'homesafe' || iconType === 'awaysafe')                    return `rgba(10, 110, 60, ${a})`
+  return `rgba(20, 20, 35, ${a})`
 }
 
 function getColor(iconType: string): string {
@@ -41,8 +46,10 @@ function getDot(iconType: string): string {
 
 export function LancesPopupPanel() {
   const [matchState,  setMatchState]  = useState<RfMatchState | null>(null)
-  const [popupLines,  setPopupLines]  = useState<PopupLineOption>('3')
+  const [extraTime,   setExtraTime]   = useState<string | null>(null)
+  const [popupLines,  setPopupLines]  = useState<PopupLineOption>(() => readStr(SKEYS.popupLines, '3', POPUP_LINE_OPTS))
   const [ctxMenu,     setCtxMenu]     = useState<{ x: number; y: number } | null>(null)
+  const [bgOpacity,   setBgOpacity]   = useState<number>(() => readFloat(SKEYS.popupBgOpacity, 0.92))
 
   const staleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -52,17 +59,30 @@ export function LancesPopupPanel() {
       if (staleRef.current) clearTimeout(staleRef.current)
       staleRef.current = setTimeout(() => setMatchState(null), 15_000)
     })
-    const offChanged = window.electronAPI.onRfGameChanged(() => setMatchState(null))
-    return () => { off(); offChanged(); if (staleRef.current) clearTimeout(staleRef.current) }
+    const offChanged  = window.electronAPI.onRfGameChanged(() => { setMatchState(null); setExtraTime(null) })
+    const offExtra    = window.electronAPI.onRfExtraTime(v => setExtraTime(v))
+    const onStorage  = (e: StorageEvent) => {
+      if (e.key === SKEYS.popupBgOpacity) setBgOpacity(readFloat(SKEYS.popupBgOpacity, 0.92))
+      if (e.key === SKEYS.popupLines)     setPopupLines(readStr(SKEYS.popupLines, '3', POPUP_LINE_OPTS))
+    }
+    window.addEventListener('storage', onStorage)
+    return () => {
+      off(); offChanged(); offExtra()
+      window.removeEventListener('storage', onStorage)
+      if (staleRef.current) clearTimeout(staleRef.current)
+    }
   }, [])
 
   useEffect(() => {
-    window.electronAPI.resizeWindow(320, parseInt(popupLines) * POPUP_ROW_H)
+    window.electronAPI.resizeWindow(320, parseInt(popupLines) * POPUP_ROW_H + POPUP_INFO_H)
   }, [popupLines])
 
-  const events   = matchState?.events ?? []
-  const popupEvs = events.slice(0, parseInt(popupLines))
-  const windowBg = getWindowBg(events[0]?.iconType)
+  const events      = matchState?.events ?? []
+  const popupEvs    = events.slice(0, parseInt(popupLines))
+  const windowBg    = getWindowBg(events[0]?.iconType, bgOpacity)
+  const score       = matchState?.score ?? null
+  const rfClock     = useRfClock(matchState, extraTime)
+  const timeDisplay = rfClock || null
 
   const openCtx = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -99,6 +119,12 @@ export function LancesPopupPanel() {
         )}
       </div>
 
+      {/* Barra de info: placar + tempo */}
+      <div className="popup-info-bar">
+        <span className="popup-info-score">{score ?? '— - —'}</span>
+        {timeDisplay && <span className="popup-info-time">{timeDisplay}</span>}
+      </div>
+
       {/* Menu de contexto (botão direito) */}
       {ctxMenu && (
         <>
@@ -109,7 +135,7 @@ export function LancesPopupPanel() {
               <button
                 key={opt}
                 className={`popup-ctx-item${popupLines === opt ? ' active' : ''}`}
-                onClick={() => { setPopupLines(opt); setCtxMenu(null) }}
+                onClick={() => { setPopupLines(opt); writeSetting(SKEYS.popupLines, opt); setCtxMenu(null) }}
               >
                 {opt} linha{parseInt(opt) > 1 ? 's' : ''}
                 {popupLines === opt && <span className="popup-ctx-check">✓</span>}
