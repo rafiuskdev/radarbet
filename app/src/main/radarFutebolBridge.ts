@@ -1,21 +1,60 @@
+/**
+ * radarFutebolBridge.ts — Híbrido SSE + Scoreboard
+ *
+ * SSE /sse/home → lista de jogos ao vivo + idWilliamhill (sem scraping DOM da lista RF)
+ * Puppeteer     → scoreboard por jogo (lances com segundos precisos e histórico completo)
+ *
+ * Vantagem vs bridge antigo:
+ *   - Sem rfListPage nem navegação RF → clicar Radar → aguardar popup
+ *   - idWilliamhill vem direto do SSE; navegamos direto para o scoreboard
+ *   - onGamesUpdate push: lista de jogos atualiza sem polling
+ */
+
+import { existsSync } from 'fs'
 import type { Browser, Page } from 'puppeteer-core'
-import { findChrome } from './chromeBridge'
 
-const RF_URL = 'https://www.radarfutebol.com/'
+const RF_HOME = 'https://www.radarfutebol.com/'
 
-async function getPuppeteer() {
-  const mod = await import('puppeteer-core')
-  return mod.default
+const SSE_URL = (() => {
+  const u = new URL('/sse/home', RF_HOME)
+  u.searchParams.set('campoBusca',                  '')
+  u.searchParams.set('somLigado',                   'false')
+  u.searchParams.set('mostrarApenasJogosLive',       'true')
+  u.searchParams.set('mostrarApenasJogosFavoritos',  'false')
+  u.searchParams.set('countJogosMostrar',            '25')
+  u.searchParams.set('mostrarFiltroAcrescimo',       'false')
+  u.searchParams.set('filtroAlertas',                'false')
+  u.searchParams.set('ordemInicio',                  'false')
+  return u.href
+})()
+
+// ── Chrome path ───────────────────────────────────────────────────────────────
+
+export function findChrome(): string | null {
+  const candidates = [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    `${process.env['LOCALAPPDATA']}\\Google\\Chrome\\Application\\chrome.exe`,
+  ]
+  for (const c of candidates) if (existsSync(c)) return c
+  return null
 }
 
-// ── Estado ────────────────────────────────────────────────────────────────────
-// rfListPage  → sempre na lista RF (como listPage da bet365)
-// rfGamePages → Map<pageKey, Page>  onde pageKey = `${gameWinId}:lances`
-//               Cada painel de lances tem a sua própria página de scoreboard
+// ── Tipo interno SSE ──────────────────────────────────────────────────────────
 
-let rfBrowser:  Browser | null = null
-let rfListPage: Page    | null = null
-const rfGamePages = new Map<string, Page>()  // pageKey → scoreboard Page
+interface SseEvento {
+  idEvento:       number
+  idWilliamhill:  string
+  timeCasa:       string
+  timeFora:       string
+  golTimeCasaFt:  number
+  golTimeForaFt:  number
+  tempoAtual:     string
+  status:         string
+  nomeCampeonato: string
+  nomeCategoria:  string
+  flag:           string
+}
 
 // ── Tipos públicos ────────────────────────────────────────────────────────────
 
@@ -46,6 +85,24 @@ export type RfNavResult =
   | { ok: true;  pageKey: string }
   | { ok: false; reason: 'not-found' | 'no-radar' }
 
+// ── Estado SSE ────────────────────────────────────────────────────────────────
+
+let sseCookies = ''
+let sseActive  = false
+let sseAbort:  AbortController | null = null
+const sseGames = new Map<number, SseEvento>()
+
+// ── Estado Puppeteer (scoreboard) ─────────────────────────────────────────────
+
+let rfBrowser: Browser | null = null
+const rfGamePages = new Map<string, Page>()  // pageKey → scoreboard Page
+
+// ── Callback push para game list ──────────────────────────────────────────────
+
+type GamesCb = (games: RfGame[]) => void
+let gamesCb: GamesCb | null = null
+export function onGamesUpdate(cb: GamesCb): void { gamesCb = cb }
+
 // ── Utilitários ───────────────────────────────────────────────────────────────
 
 export function makeGameKey(team1: string, team2: string): string {
@@ -55,188 +112,251 @@ export function makeGameKey(team1: string, team2: string): string {
   return `${norm(team1)}-vs-${norm(team2)}`
 }
 
-// ── Launch ────────────────────────────────────────────────────────────────────
+function fuzzy(hay: string, needle: string): boolean {
+  const norm = (s: string) =>
+    s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
+  const h = norm(hay), n = norm(needle)
+  if (h === n || h.includes(n) || n.includes(h)) return true
+  return n.split(' ').filter(w => w.length >= 3).some(w => h.includes(w))
+}
 
-export async function launchRfChrome(): Promise<void> {
-  if (rfBrowser) return
+function sseToRfGame(ev: SseEvento): RfGame {
+  return {
+    team1:   ev.timeCasa,
+    team2:   ev.timeFora,
+    time:    ev.tempoAtual,
+    score:   `${ev.golTimeCasaFt ?? 0}-${ev.golTimeForaFt ?? 0}`,
+    league:  ev.nomeCampeonato ?? '',
+    country: ev.nomeCategoria  ?? '',
+  }
+}
+
+// ── SSE: processamento de update ──────────────────────────────────────────────
+
+function processUpdate(payload: { campeonatos?: unknown[] }): void {
+  const allGames: RfGame[] = []
+  for (const camp of (payload.campeonatos ?? []) as { eventos?: Record<string, unknown> }[]) {
+    for (const raw of Object.values(camp.eventos ?? {})) {
+      const ev = raw as SseEvento
+      sseGames.set(ev.idEvento, ev)
+      allGames.push(sseToRfGame(ev))
+    }
+  }
+  if (gamesCb) gamesCb(allGames)
+}
+
+// ── SSE: conexão ──────────────────────────────────────────────────────────────
+
+async function connectSse(): Promise<void> {
+  if (sseActive) return
+  sseActive = true
+  sseAbort  = new AbortController()
+
+  const run = async (): Promise<void> => {
+    try {
+      console.log('[rfBridge] Conectando ao SSE...')
+      const res = await fetch(SSE_URL, {
+        signal: sseAbort!.signal,
+        headers: {
+          'accept':          'text/event-stream',
+          'accept-language': 'pt-BR,pt;q=0.9',
+          'cache-control':   'no-cache',
+          'cookie':          sseCookies,
+          'referer':         RF_HOME,
+          'user-agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      })
+
+      if (!res.ok || !res.body) {
+        console.warn(`[rfBridge] SSE HTTP ${res.status} — renovando cookies...`)
+        await refreshCookies()
+        throw new Error(`HTTP ${res.status}`)
+      }
+
+      console.log('[rfBridge] SSE conectado ✔')
+      const reader  = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = '', eventType = '', dataLine = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        buffer  = buffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if      (line.startsWith('event: ')) eventType = line.slice(7).trim()
+          else if (line.startsWith('data: '))  dataLine  = line.slice(6).trim()
+          else if (line.trim() === '') {
+            if (dataLine) {
+              try { processUpdate(JSON.parse(dataLine)) }
+              catch { /* JSON inválido — ignorar */ }
+              eventType = ''
+              dataLine  = ''
+            }
+          }
+        }
+      }
+      console.warn('[rfBridge] SSE encerrado pelo servidor')
+    } catch (e: unknown) {
+      if ((e as { name?: string }).name === 'AbortError') { sseActive = false; return }
+      console.warn('[rfBridge] SSE erro:', (e as Error).message, '— reconectando em 5s')
+    }
+    await new Promise(r => setTimeout(r, 5000))
+    if (sseActive) await run()
+  }
+
+  run().catch(e => console.error('[rfBridge] Erro fatal SSE:', e))
+}
+
+// ── Cookie refresh via Puppeteer headless ─────────────────────────────────────
+
+async function refreshCookies(): Promise<void> {
   const executablePath = findChrome()
-  if (!executablePath) throw new Error('Chrome não encontrado')
+  if (!executablePath) { console.error('[rfBridge] Chrome não encontrado'); return }
+  try {
+    const puppeteer = (await import('puppeteer-core')).default
+    const browser   = await puppeteer.launch({
+      executablePath,
+      headless: true,
+      args: ['--incognito', '--no-sandbox', '--disable-blink-features=AutomationControlled',
+             '--no-first-run', '--no-default-browser-check'],
+      defaultViewport: { width: 800, height: 600 },
+    })
+    const page = (await browser.pages())[0] ?? await browser.newPage()
+    await page.goto(RF_HOME, { waitUntil: 'networkidle2', timeout: 30_000 })
+    sseCookies = (await page.cookies()).map(c => `${c.name}=${c.value}`).join('; ')
+    await browser.close()
+    console.log('[rfBridge] Cookies renovados ✔')
+  } catch (e) {
+    console.error('[rfBridge] Erro ao renovar cookies:', (e as Error).message)
+  }
+}
 
+// ── Puppeteer: browser para scoreboards ───────────────────────────────────────
+
+async function getPuppeteer() {
+  return (await import('puppeteer-core')).default
+}
+
+async function ensureRfBrowser(): Promise<boolean> {
+  if (rfBrowser) return true
+  const executablePath = findChrome()
+  if (!executablePath) return false
   const puppeteer = await getPuppeteer()
   rfBrowser = await puppeteer.launch({
     executablePath,
     headless: false,
-    args: ['--incognito', '--disable-blink-features=AutomationControlled',
-           '--no-first-run', '--no-default-browser-check',
-           '--window-size=800,600', '--start-minimized'],
-    defaultViewport: { width: 800, height: 600 },
+    args: [
+      '--incognito',
+      '--no-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--window-size=1,1',
+      '--window-position=-3200,-3200',  // fora do ecrã — invisível para o utilizador
+    ],
+    defaultViewport: { width: 1280, height: 800 },
   })
-
-  const pages = await rfBrowser.pages()
-  rfListPage = pages[0] ?? await rfBrowser.newPage()
-  console.log('[rfBridge] Navegando para radarfutebol...')
-  await rfListPage.goto(RF_URL, { waitUntil: 'networkidle2', timeout: 30_000 })
-  console.log('[rfBridge] radarfutebol carregado')
+  // A aba em branco inicial é mantida como keepalive —
+  // fechar todas as abas faz o Chrome incógnito encerrar sozinho.
+  rfBrowser.on('disconnected', () => {
+    console.warn('[rfBridge] Browser de scoreboard desconectado — resetando')
+    rfBrowser = null
+    rfGamePages.clear()
+  })
+  console.log('[rfBridge] Browser de scoreboard lançado')
+  return true
 }
 
-// ── Scraping: lista de jogos ──────────────────────────────────────────────────
+// ── API pública ───────────────────────────────────────────────────────────────
+
+export async function launchRfChrome(): Promise<void> {
+  // SSE (headless cookie fetch → conexão permanente)
+  if (!sseActive) {
+    await refreshCookies()
+    connectSse()
+  }
+  // Browser para scoreboards
+  await ensureRfBrowser()
+}
 
 export async function scrapeRfGames(): Promise<RfGame[]> {
-  if (!rfListPage) return []
-  try {
-    return await rfListPage.evaluate((): RfGame[] => {
-      const results: RfGame[] = []
-      for (const table of Array.from(document.querySelectorAll('table')) as HTMLTableElement[]) {
-        const countryImg = table.querySelector('thead img[alt]') as HTMLImageElement | null
-        const country    = countryImg?.alt ?? ''
-        const leagueEl   = table.querySelector('thead strong') as HTMLElement | null
-        const full       = leagueEl?.textContent?.trim() ?? ''
-        const ci         = full.indexOf(': ')
-        const league     = ci >= 0 ? full.slice(ci + 2) : full
-
-        for (const row of Array.from(table.querySelectorAll('tbody tr')) as HTMLTableRowElement[]) {
-          const teamEls = row.querySelectorAll('p.text-left')
-          if (teamEls.length < 2) continue
-          const team1 = teamEls[0].textContent?.trim() ?? ''
-          const team2 = teamEls[1].textContent?.trim() ?? ''
-          if (!team1 || !team2) continue
-          const time  = (row.querySelector('p.text-red-600') as HTMLElement | null)?.textContent?.trim() ?? ''
-          const sEls  = row.querySelectorAll('strong.mx-1')
-          const score = sEls.length >= 2
-            ? `${sEls[0].textContent?.trim()}-${sEls[1].textContent?.trim()}`
-            : '0-0'
-          results.push({ team1, team2, time, score, league, country })
-        }
-      }
-      return results
-    })
-  } catch (e) {
-    console.error('[rfBridge] Erro em scrapeRfGames:', e)
-    return []
-  }
+  return [...sseGames.values()].map(sseToRfGame)
 }
-
-// ── Navegação para jogo específico ────────────────────────────────────────────
-// pageKey = chave composta do painel de lances (ex: `42:lances`)
-// Cada painel tem a sua própria página de scoreboard.
 
 export async function navigateToRfGame(
   team1: string,
   team2: string,
-  pageKey: string,
+  pageKey = 'legacy:lances',
 ): Promise<RfNavResult> {
-  if (!rfListPage) return { ok: false, reason: 'not-found' }
-
   // Reutiliza página existente para este painel
   const existing = rfGamePages.get(pageKey)
   if (existing && !existing.isClosed()) {
-    console.log('[rfBridge] Reutilizando página RF para:', pageKey)
+    console.log('[rfBridge] Reutilizando scoreboard:', pageKey)
     return { ok: true, pageKey }
   }
 
-  // Garante que rfListPage está na lista
-  if (!rfListPage.url().includes('radarfutebol.com/')) {
-    await rfListPage.goto(RF_URL, { waitUntil: 'networkidle2', timeout: 20_000 })
+  // Aguarda SSE ter dados (até 8s)
+  const deadline = Date.now() + 8000
+  while (sseGames.size === 0 && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 300))
   }
 
-  await rfListPage.waitForSelector('tbody tr', { timeout: 10_000 }).catch(() => {})
-
-  // Activa filtro AO VIVO
-  await rfListPage.evaluate(() => {
-    const btns = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[]
-    const lb   = btns.find(b => b.textContent?.toLowerCase().includes('ao vivo'))
-    if (lb && !lb.classList.contains('bg-red-100')) lb.click()
-  }).catch(() => {})
-  await new Promise(r => setTimeout(r, 1000))
-
-  // Fuzzy match e marca botão Radar
-  const result = await rfListPage.evaluate((t1: string, t2: string) => {
-    function norm(s: string) {
-      return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
+  // Fuzzy match no cache SSE para obter idWilliamhill
+  let matched: SseEvento | null = null
+  for (const ev of sseGames.values()) {
+    if ((fuzzy(ev.timeCasa, team1) || fuzzy(ev.timeCasa, team2)) &&
+        (fuzzy(ev.timeFora, team1) || fuzzy(ev.timeFora, team2))) {
+      matched = ev
+      break
     }
-    function fuzzy(hay: string, needle: string): boolean {
-      const h = norm(hay), n = norm(needle)
-      if (h === n || h.includes(n) || n.includes(h)) return true
-      return n.split(' ').filter(w => w.length >= 3).some(w => h.includes(w))
-    }
-    for (const row of Array.from(document.querySelectorAll('tbody tr')) as HTMLTableRowElement[]) {
-      const els = row.querySelectorAll('p.text-left')
-      if (els.length < 2) continue
-      const f1 = els[0].textContent?.trim() ?? ''
-      const f2 = els[1].textContent?.trim() ?? ''
-      if (!(fuzzy(f1, t1) || fuzzy(f1, t2))) continue
-      if (!(fuzzy(f2, t1) || fuzzy(f2, t2))) continue
-      const btn = row.querySelector('.radar[title="Radar"]') as HTMLElement | null
-      if (btn) { btn.setAttribute('data-rb-lances', 'true'); return { ok: true, found: true } }
-      return { ok: false, found: true }
-    }
-    return { ok: false, found: false }
-  }, team1, team2)
-
-  console.log('[rfBridge] Busca RF:', result, '|', team1, 'x', team2)
-
-  if (!result.ok) {
-    return { ok: false, reason: result.found ? 'no-radar' : 'not-found' }
   }
 
-  // Listener ANTES do clique
-  const newPagePromise = new Promise<Page | null>(resolve => {
-    const t = setTimeout(() => resolve(null), 10_000)
-    rfBrowser?.once('targetcreated', async target => {
-      clearTimeout(t)
-      resolve(await target.page().catch(() => null))
-    })
-  })
-
-  await rfListPage.click('[data-rb-lances]')
-  await rfListPage.evaluate(() => {
-    document.querySelector('[data-rb-lances]')?.removeAttribute('data-rb-lances')
-  }).catch(() => {})
-
-  const newPage = await newPagePromise
-  if (!newPage) {
-    console.warn('[rfBridge] Nova janela não detectada')
+  if (!matched) {
+    console.warn('[rfBridge] Jogo não encontrado no SSE:', team1, 'x', team2)
     return { ok: false, reason: 'not-found' }
   }
 
-  // Extrai idWilliamhill e navega para o scoreboard
-  await newPage.waitForSelector('[wire\\:snapshot]', { timeout: 10_000 }).catch(() => {})
-  const whId = await newPage.evaluate(() => {
-    const el = document.querySelector('[wire\\:snapshot]')
-    if (!el) return null
-    try { return JSON.parse(el.getAttribute('wire:snapshot') ?? '{}')?.data?.idWilliamhill ?? null }
-    catch { return null }
-  }).catch(() => null)
-
-  if (whId) {
-    await newPage.goto(
-      `https://radarfutebol.xyz/scoreboards/app/football/index.html?eventId=${whId}&sport=football&locale=pt-pt&theme=dark`,
-      { waitUntil: 'domcontentloaded', timeout: 20_000 }
-    )
+  const whId = matched.idWilliamhill
+  if (!whId) {
+    console.warn('[rfBridge] idWilliamhill ausente:', team1, 'x', team2)
+    return { ok: false, reason: 'no-radar' }
   }
 
+  if (!rfBrowser) return { ok: false, reason: 'not-found' }
+
+  // Navega direto para o scoreboard (sem passar pela lista RF)
+  const scoreboardUrl = `https://radarfutebol.xyz/scoreboards/app/football/index.html?eventId=${whId}&sport=football&locale=pt-pt&theme=dark`
+  console.log('[rfBridge] Abrindo scoreboard:', pageKey, '| whId:', whId)
+
+  const newPage = await rfBrowser.newPage()
+
+  await newPage.goto(scoreboardUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 })
   await newPage.waitForSelector('#scoreboard:not(.loading-animation)', { timeout: 15_000 }).catch(() => {})
   await new Promise(r => setTimeout(r, 1000))
 
+  // Clica aba "Comentários"
   await newPage.evaluate((): void => {
     const li = document.querySelector('li[data-action="commentaries"]') as HTMLElement | null
     if (!li) return
-    li.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }))
-    li.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true, cancelable: true, view: window }))
-    li.dispatchEvent(new MouseEvent('click',     { bubbles: true, cancelable: true, view: window }))
+    ;(['mousedown', 'mouseup', 'click'] as const).forEach(type =>
+      li.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
+    )
     li.click()
   }).catch(() => {})
 
   await newPage.waitForSelector('#box_commentaries li', { timeout: 12_000 })
-    .then(() => console.log('[rfBridge] Comentários carregados para:', pageKey))
-    .catch(() => console.warn('[rfBridge] Timeout comentários para:', pageKey))
+    .then(() => console.log('[rfBridge] Comentários carregados:', pageKey))
+    .catch(() => console.warn('[rfBridge] Timeout comentários:', pageKey))
 
   rfGamePages.set(pageKey, newPage)
-  console.log('[rfBridge] rfGamePages registado:', pageKey)
+  console.log('[rfBridge] Scoreboard registado:', pageKey)
   return { ok: true, pageKey }
 }
-
-// ── Scraping: estado do jogo ──────────────────────────────────────────────────
 
 export async function scrapeRfMatchState(pageKey: string): Promise<RfMatchState | null> {
   const page = rfGamePages.get(pageKey)
@@ -246,10 +366,10 @@ export async function scrapeRfMatchState(pageKey: string): Promise<RfMatchState 
       const score    = (document.querySelector('[data-push="score"]')    as HTMLElement | null)?.textContent?.trim() ?? ''
       const homeTeam = (document.querySelector('[data-push="homeName"]') as HTMLElement | null)?.textContent?.trim() ?? ''
       const awayTeam = (document.querySelector('[data-push="awayName"]') as HTMLElement | null)?.textContent?.trim() ?? ''
-      const events: LanceEvent[] = []
+      const events: Array<{ minute: string; seconds: string; iconType: string; text: string }> = []
       for (const li of Array.from(document.querySelectorAll('#box_commentaries li')) as HTMLLIElement[]) {
-        const minute   = li.querySelector('.minute')?.textContent?.trim() ?? ''
-        const seconds  = li.querySelector('.seconds')?.textContent?.trim() ?? ''
+        const minute   = li.querySelector('.minute')?.textContent?.trim()   ?? ''
+        const seconds  = li.querySelector('.seconds')?.textContent?.trim()  ?? ''
         const bgImg    = (li.querySelector('.comment_icon') as HTMLElement | null)?.style?.backgroundImage ?? ''
         const m        = bgImg.match(/msg_([^.]+)\.svg/)
         const iconType = m ? m[1] : 'commentary'
@@ -265,22 +385,22 @@ export async function scrapeRfMatchState(pageKey: string): Promise<RfMatchState 
   }
 }
 
-// ── Fechar página de um painel específico ─────────────────────────────────────
-
 export async function closeRfGamePage(pageKey: string): Promise<void> {
   const page = rfGamePages.get(pageKey)
-  if (page && !page.isClosed()) {
-    await page.close().catch(() => {})
-  }
+  if (page && !page.isClosed()) await page.close().catch(() => {})
   rfGamePages.delete(pageKey)
-  console.log('[rfBridge] Página fechada:', pageKey)
+  console.log('[rfBridge] Scoreboard fechado:', pageKey)
 }
 
-// ── Cleanup total ─────────────────────────────────────────────────────────────
-
 export async function closeRfBrowser(): Promise<void> {
-  await rfBrowser?.close()
-  rfBrowser  = null
-  rfListPage = null
+  // Para SSE
+  sseAbort?.abort()
+  sseAbort   = null
+  sseActive  = false
+  sseGames.clear()
+  // Fecha browser de scoreboards
+  await rfBrowser?.close().catch(() => {})
+  rfBrowser = null
   rfGamePages.clear()
+  console.log('[rfBridge] Bridge encerrado')
 }
