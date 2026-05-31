@@ -6,6 +6,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('gameDataUpdate', listener)
     return (): void => { ipcRenderer.off('gameDataUpdate', listener) }
   },
+  onGameTimeUpdate: (cb: (data: { time: string | null; extraTime: string | null }) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, data: { time: string | null; extraTime: string | null }): void => cb(data)
+    ipcRenderer.on('gameTimeUpdate', listener)
+    return (): void => { ipcRenderer.off('gameTimeUpdate', listener) }
+  },
   onBet365Closed: (cb: () => void) => {
     const listener = (): void => cb()
     ipcRenderer.on('bet365Closed', listener)

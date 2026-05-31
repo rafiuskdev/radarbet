@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import type { RfMatchState } from '../electron.d'
+import type { RfMatchState, GameTime } from '../electron.d'
 
 // ── Linhas ────────────────────────────────────────────────────────────────────
 
@@ -86,6 +86,7 @@ export function LancesPanel({ onBack }: Props) {
   const [showSettings, setShowSettings] = useState(false)
   const [opacity,      setOpacity]      = useState(1.0)
   const [fontSize,     setFontSize]     = useState(14)
+  const [gameTime,     setGameTime]     = useState<GameTime | null>(null)
 
   const staleRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevTopRef = useRef('')
@@ -113,6 +114,7 @@ export function LancesPanel({ onBack }: Props) {
   }, [matchState])
 
   useEffect(() => {
+    const offTime     = window.electronAPI.onGameTimeUpdate(data => setGameTime(data))
     const offChanged  = window.electronAPI.onRfGameChanged(() => {
       setMatchState(null)
       setNotFound(false as const)
@@ -127,7 +129,7 @@ export function LancesPanel({ onBack }: Props) {
       const top = state.events[0]?.text ?? ''
       if (top !== prevTopRef.current) prevTopRef.current = top
     })
-    return () => { off(); offNotFound(); offChanged(); if (staleRef.current) clearTimeout(staleRef.current) }
+    return () => { off(); offNotFound(); offChanged(); offTime(); if (staleRef.current) clearTimeout(staleRef.current) }
   }, [])
 
   useEffect(() => {
@@ -153,6 +155,8 @@ export function LancesPanel({ onBack }: Props) {
             <span className="lances-header-time">{events[0].minute}'</span>
           )}
         </div>
+        <span className="rb-topbar-time rb-no-drag">{gameTime?.time || '--:--'}</span>
+        {gameTime?.extraTime && <span className="rb-extra-time rb-no-drag">{gameTime.extraTime}</span>}
         <button
           className={`rb-btn-switch rb-no-drag${showSettings ? ' rb-btn-active' : ''}`}
           onClick={() => setShowSettings(s => !s)}

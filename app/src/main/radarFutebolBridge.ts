@@ -21,7 +21,7 @@ const SSE_URL = (() => {
   u.searchParams.set('somLigado',                   'false')
   u.searchParams.set('mostrarApenasJogosLive',       'true')
   u.searchParams.set('mostrarApenasJogosFavoritos',  'false')
-  u.searchParams.set('countJogosMostrar',            '25')
+  u.searchParams.set('countJogosMostrar',            '100')
   u.searchParams.set('mostrarFiltroAcrescimo',       'false')
   u.searchParams.set('filtroAlertas',                'false')
   u.searchParams.set('ordemInicio',                  'false')

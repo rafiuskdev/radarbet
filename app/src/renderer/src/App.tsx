@@ -72,7 +72,7 @@ export default function App() {
   }
 
   if (MODE === 'lances-popup') {
-    return <div className="radarbet-root"><LancesPopupPanel /></div>
+    return <div className="radarbet-root radarbet-root--popup"><LancesPopupPanel /></div>
   }
 
   if (MODE === 'game') {

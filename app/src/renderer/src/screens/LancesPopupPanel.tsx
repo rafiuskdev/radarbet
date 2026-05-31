@@ -3,7 +3,7 @@ import type { RfMatchState } from '../electron.d'
 
 type PopupLineOption = '1' | '2' | '3' | '5'
 
-const POPUP_ROW_H = 28
+const POPUP_ROW_H = 34
 
 // Cor de fundo da janela inteira baseada no evento mais recente
 function getWindowBg(iconType?: string): string {
