@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('rfGameChanged', listener)
     return (): void => { ipcRenderer.off('rfGameChanged', listener) }
   },
+  onRfExtraTime: (cb: (v: string | null) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, v: string | null): void => cb(v)
+    ipcRenderer.on('rfExtraTime', listener)
+    return (): void => { ipcRenderer.off('rfExtraTime', listener) }
+  },
   onLiveGamesUpdate: (cb: (games: unknown[]) => void) => {
     const listener = (_: Electron.IpcRendererEvent, games: unknown[]): void => cb(games)
     ipcRenderer.on('liveGamesUpdate', listener)

@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import type { RfMatchState, GameTime } from '../electron.d'
+import type { RfMatchState } from '../electron.d'
+import { SKEYS, readFloat, readStr } from '../lib/settings'
+import { useRfClock } from '../lib/useRfClock'
 
 // ── Linhas ────────────────────────────────────────────────────────────────────
 
 type LineOption = '3' | '5' | '10' | 'all'
+
+const LINE_OPTS = ['3', '5', '10', 'all'] as const
 
 const LINE_HEIGHTS: Record<LineOption, number> = {
   '3':   140,
@@ -11,7 +15,6 @@ const LINE_HEIGHTS: Record<LineOption, number> = {
   '10':  355,
   'all': 560,
 }
-const SETTINGS_EXTRA = 146  // 4 rows × ~28px + padding
 
 // ── Cores ─────────────────────────────────────────────────────────────────────
 
@@ -82,11 +85,10 @@ export function LancesPanel({ onBack }: Props) {
   const [matchState,   setMatchState]   = useState<RfMatchState | null>(null)
   const [notFound,     setNotFound]     = useState<'not-found' | 'no-radar' | false>(false)
   const [isStale,      setIsStale]      = useState(false)
-  const [lineCount,    setLineCount]    = useState<LineOption>('10')
-  const [showSettings, setShowSettings] = useState(false)
-  const [opacity,      setOpacity]      = useState(1.0)
-  const [fontSize,     setFontSize]     = useState(14)
-  const [gameTime,     setGameTime]     = useState<GameTime | null>(null)
+  const [lineCount,  setLineCount]  = useState<LineOption>(() => readStr(SKEYS.lancesLineCount, '10', LINE_OPTS))
+  const [opacity,    setOpacity]    = useState(() => readFloat(SKEYS.lancesOpacity, 1.0))
+  const [fontSize,   setFontSize]   = useState(() => Math.round(readFloat(SKEYS.lancesFontSize, 14)))
+  const [extraTime,  setExtraTime]  = useState<string | null>(null)
 
   const staleRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevTopRef = useRef('')
@@ -113,11 +115,14 @@ export function LancesPanel({ onBack }: Props) {
     }
   }, [matchState])
 
+  const rfClock = useRfClock(matchState, extraTime)
+
   useEffect(() => {
-    const offTime     = window.electronAPI.onGameTimeUpdate(data => setGameTime(data))
+    const offExtra    = window.electronAPI.onRfExtraTime(v => setExtraTime(v))
     const offChanged  = window.electronAPI.onRfGameChanged(() => {
       setMatchState(null)
       setNotFound(false as const)
+      setExtraTime(null)
     })
     const offNotFound = window.electronAPI.onRfGameNotFound(reason => setNotFound(reason))
     const off = window.electronAPI.onRfMatchUpdate(state => {
@@ -129,13 +134,22 @@ export function LancesPanel({ onBack }: Props) {
       const top = state.events[0]?.text ?? ''
       if (top !== prevTopRef.current) prevTopRef.current = top
     })
-    return () => { off(); offNotFound(); offChanged(); offTime(); if (staleRef.current) clearTimeout(staleRef.current) }
+    return () => { off(); offNotFound(); offChanged(); offExtra(); if (staleRef.current) clearTimeout(staleRef.current) }
   }, [])
 
   useEffect(() => {
-    const h = LINE_HEIGHTS[lineCount] + (showSettings ? SETTINGS_EXTRA : 0)
-    window.electronAPI.resizeWindow(320, h)
-  }, [lineCount, showSettings])
+    window.electronAPI.resizeWindow(320, LINE_HEIGHTS[lineCount])
+  }, [lineCount])
+
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SKEYS.lancesOpacity)   setOpacity(readFloat(SKEYS.lancesOpacity, 1.0))
+      if (e.key === SKEYS.lancesFontSize)  setFontSize(Math.round(readFloat(SKEYS.lancesFontSize, 14)))
+      if (e.key === SKEYS.lancesLineCount) setLineCount(readStr(SKEYS.lancesLineCount, '10', LINE_OPTS))
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   const events   = matchState?.events ?? []
   const home     = matchState?.homeTeam ?? ''
@@ -151,74 +165,18 @@ export function LancesPanel({ onBack }: Props) {
         <div className="lances-header-info">
           <span className="lances-teams">{home || '…'} × {away || '…'}</span>
           <span className={`lances-score${isStale ? ' lances-score-stale' : ''}`}>{score}</span>
-          {events[0]?.minute && (
-            <span className="lances-header-time">{events[0].minute}'</span>
+          {rfClock && (
+            <span className="lances-header-time">{rfClock}</span>
           )}
         </div>
-        <span className="rb-topbar-time rb-no-drag">{gameTime?.time || '--:--'}</span>
-        {gameTime?.extraTime && <span className="rb-extra-time rb-no-drag">{gameTime.extraTime}</span>}
         <button
-          className={`rb-btn-switch rb-no-drag${showSettings ? ' rb-btn-active' : ''}`}
-          onClick={() => setShowSettings(s => !s)}
-          title="Configurações"
-        >⚙</button>
+          className="rb-btn-switch rb-no-drag"
+          title="Abrir popup de lances"
+          onClick={() => window.electronAPI.openFeatureWindow('lances-popup')}
+        >□</button>
         <button className="rb-btn-switch rb-no-drag" title="Minimizar" onClick={() => window.electronAPI.minimizeWindow()}>−</button>
         <button className="rb-close rb-no-drag" onClick={() => window.close()}>×</button>
       </div>
-
-      {/* Painel de settings */}
-      {showSettings && (
-        <div className="lances-settings rb-no-drag">
-          {/* Popup */}
-          <div className="rsp-row">
-            <span className="rsp-label">Popup</span>
-            <button
-              className="lances-line-btn"
-              style={{ flex: 'none', padding: '3px 10px' }}
-              onClick={() => window.electronAPI.openFeatureWindow('lances-popup')}
-            >Abrir</button>
-          </div>
-          {/* Linhas */}
-          <div className="rsp-row">
-            <span className="rsp-label">Linhas</span>
-            <div className="lances-line-opts">
-              {(['3', '5', '10', 'all'] as LineOption[]).map(opt => (
-                <button
-                  key={opt}
-                  className={`lances-line-btn${lineCount === opt ? ' active' : ''}`}
-                  onClick={() => setLineCount(opt)}
-                >
-                  {opt === 'all' ? 'Todas' : opt}
-                </button>
-              ))}
-            </div>
-          </div>
-          {/* Fonte */}
-          <div className="rsp-row">
-            <span className="rsp-label">Fonte</span>
-            <span className="rsp-val">{fontSize}px</span>
-            <input
-              className="rsp-slider"
-              type="range"
-              min="9" max="18" step="1"
-              value={fontSize}
-              onChange={e => setFontSize(parseInt(e.target.value))}
-            />
-          </div>
-          {/* Opacidade */}
-          <div className="rsp-row">
-            <span className="rsp-label">Opacidade</span>
-            <span className="rsp-val">{Math.round(opacity * 100)}%</span>
-            <input
-              className="rsp-slider"
-              type="range"
-              min="10" max="100" step="5"
-              value={Math.round(opacity * 100)}
-              onChange={e => setOpacity(parseInt(e.target.value) / 100)}
-            />
-          </div>
-        </div>
-      )}
 
       {/* Último ataque perigoso por equipa */}
       {matchState && (

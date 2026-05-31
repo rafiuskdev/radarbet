@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { GameData } from '../electron.d'
+import { SKEYS, readFloat, readBool, writeSetting } from '../lib/settings'
 import rawOddsTable from '../data/odds_justas.json'
 import logo365 from '../assets/logo-bet365.jpg'
 import logoBF  from '../assets/logo-betfair.png'
@@ -65,18 +66,17 @@ export function RadarPanel({ game, onBack }: Props) {
   const [timerColor,   setTimerColor]   = useState('')
   const [oddDir,          setOddDir]          = useState<'up' | 'down' | null>(null)
   const [selectedLineIdx, setSelectedLineIdx] = useState(0)
-  const [showSettings,    setShowSettings]    = useState(false)
-  const [soundEnabled,    setSoundEnabled]    = useState(true)
-  const [soundVolume,     setSoundVolume]     = useState(25)
-  const [opacity,      setOpacity]      = useState(1.0)
-  const [fontSize,     setFontSize]     = useState(14) // px base; zoom = fontSize/12
+  const [soundEnabled,    setSoundEnabled]    = useState(() => readBool(SKEYS.radarSoundEnabled, true))
+  const [soundVolume,     setSoundVolume]     = useState(() => Math.round(readFloat(SKEYS.radarSoundVolume, 25)))
+  const [opacity,      setOpacity]      = useState(() => readFloat(SKEYS.radarOpacity, 1.0))
+  const [fontSize,     setFontSize]     = useState(() => Math.round(readFloat(SKEYS.radarFontSize, 14)))
 
   const prevOdds          = useRef<Record<string, number | null>>({})
   const changedAt         = useRef<Record<string, number>>({})
   const prevG1Ref         = useRef<number | null>(null)
   const selectedLineNumRef = useRef<number | null>(null)
-  const soundEnabledRef   = useRef(true)
-  const soundVolumeRef    = useRef(0.25)
+  const soundEnabledRef   = useRef(readBool(SKEYS.radarSoundEnabled, true))
+  const soundVolumeRef    = useRef(readFloat(SKEYS.radarSoundVolume, 25) / 100)
   const staleRef          = useRef<ReturnType<typeof setTimeout> | null>(null)
   const widgetRef  = useRef<HTMLDivElement>(null)
   const resizeRef  = useRef<HTMLDivElement>(null)
@@ -91,6 +91,26 @@ export function RadarPanel({ game, onBack }: Props) {
     })
     const offClosed = window.electronAPI.onBet365Closed(() => setGameData(null))
     return () => { off(); offClosed() }
+  }, [])
+
+  // Sincroniza settings globais (alteradas no painel de configurações principal)
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SKEYS.radarOpacity)  setOpacity(readFloat(SKEYS.radarOpacity, 1.0))
+      if (e.key === SKEYS.radarFontSize) setFontSize(Math.round(readFloat(SKEYS.radarFontSize, 14)))
+      if (e.key === SKEYS.radarSoundEnabled) {
+        const v = readBool(SKEYS.radarSoundEnabled, true)
+        setSoundEnabled(v)
+        soundEnabledRef.current = v
+      }
+      if (e.key === SKEYS.radarSoundVolume) {
+        const v = Math.round(readFloat(SKEYS.radarSoundVolume, 25))
+        setSoundVolume(v)
+        soundVolumeRef.current = v / 100
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
   }, [])
 
   // Timer de estabilidade da odd — usa chave por linha para não zerar ao trocar de linha
@@ -151,7 +171,12 @@ export function RadarPanel({ game, onBack }: Props) {
   }, [gameData, trackOdd, selectedLineIdx])
 
   const toggleSound = useCallback(() => {
-    setSoundEnabled(prev => { soundEnabledRef.current = !prev; return !prev })
+    setSoundEnabled(prev => {
+      const next = !prev
+      soundEnabledRef.current = next
+      writeSetting(SKEYS.radarSoundEnabled, next)
+      return next
+    })
   }, [])
 
   // Handle de resize da janela Electron
@@ -260,11 +285,6 @@ export function RadarPanel({ game, onBack }: Props) {
         {gameData?.extraTime && <span className="rb-extra-time">{gameData.extraTime}</span>}
         <span className="rb-row-spacer" />
         <button className="rb-btn-switch rb-no-drag" title="Minimizar" onClick={() => window.electronAPI.minimizeWindow()}>−</button>
-        <button
-          className={`rb-btn-switch rb-no-drag${showSettings ? ' rb-btn-active' : ''}`}
-          title="Configurações"
-          onClick={() => setShowSettings(s => !s)}
-        >⚙</button>
         <button className="rb-close rb-no-drag" onClick={() => window.close()}>×</button>
       </div>
 
@@ -277,60 +297,6 @@ export function RadarPanel({ game, onBack }: Props) {
         <span className="radar-game-teams">{game.team1} × {game.team2}</span>
         <span className="radar-game-meta">{game.league}</span>
       </div>
-
-      {/* Painel de configurações */}
-      {showSettings && (
-        <div className="radar-settings-panel rb-no-drag">
-          <div className="rsp-row">
-            <span className="rsp-label">Opacidade</span>
-            <span className="rsp-val">{Math.round(opacity * 100)}%</span>
-            <input
-              className="rsp-slider"
-              type="range"
-              min="10" max="100" step="5"
-              value={Math.round(opacity * 100)}
-              onChange={e => setOpacity(parseInt(e.target.value) / 100)}
-            />
-          </div>
-          <div className="rsp-row">
-            <span className="rsp-label">Fonte</span>
-            <span className="rsp-val">{fontSize}px</span>
-            <input
-              className="rsp-slider"
-              type="range"
-              min="9" max="18" step="1"
-              value={fontSize}
-              onChange={e => setFontSize(parseInt(e.target.value))}
-            />
-          </div>
-          <div className="rsp-row">
-            <span className="rsp-label">Alertas</span>
-            <button
-              className={`rb-btn-switch rb-no-drag${soundEnabled ? ' rb-btn-active' : ''}`}
-              style={{ marginLeft: 'auto' }}
-              onClick={toggleSound}
-              title={soundEnabled ? 'Desativar alertas sonoros' : 'Ativar alertas sonoros'}
-            >
-              {soundEnabled ? '♪ On' : '♪ Off'}
-            </button>
-          </div>
-          <div className="rsp-row">
-            <span className="rsp-label">Volume</span>
-            <span className="rsp-val">{soundVolume}%</span>
-            <input
-              className="rsp-slider"
-              type="range"
-              min="5" max="100" step="5"
-              value={soundVolume}
-              onChange={e => {
-                const v = parseInt(e.target.value)
-                setSoundVolume(v)
-                soundVolumeRef.current = v / 100
-              }}
-            />
-          </div>
-        </div>
-      )}
 
       {/* Skeleton: aguardando primeiros dados do scraper */}
       {!gameData && (
