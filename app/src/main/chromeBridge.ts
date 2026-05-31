@@ -227,11 +227,21 @@ export async function scrapeGameData(page: Page): Promise<unknown> {
       }
 
       function readSuspended(): boolean {
-        return !!(
-          document.querySelector('.gl-ParticipantOddsOnly_Suspended') ||
-          document.querySelector('.gl-ParticipantBorderless_Suspended') ||
-          document.querySelector('.srb-ParticipantLabelCentered_Suspended')
-        )
+        // Verifica suspensão apenas dentro dos pods do mercado de golos
+        const labelEls = document.querySelectorAll('.sip-MarketGroupButton_Text, .gl-MarketGroupButton_Text')
+        for (const el of Array.from(labelEls)) {
+          const text = el.textContent?.trim() ?? ''
+          if (!/gol[os]|goal/i.test(text)) continue
+          if (!/encontro|match|game|parte|half/i.test(text)) continue
+          const pod = el.closest('.gl-MarketGroupPod, .sip-MarketGroup')
+          if (!pod) continue
+          if (
+            pod.querySelector('.gl-ParticipantOddsOnly_Suspended') ||
+            pod.querySelector('.gl-ParticipantBorderless_Suspended') ||
+            pod.querySelector('.srb-ParticipantLabelCentered_Suspended')
+          ) return true
+        }
+        return false
       }
 
       function readNextGoalOdds(): unknown {

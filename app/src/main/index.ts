@@ -114,7 +114,7 @@ const FEATURE_SIZES: Record<string, [number, number]> = {
   radar:         [300, 300],
   feature2:      [480, 380],
   lances:        [320, 355],
-  'lances-popup': [320, 84],    // 3 rows × 28px
+  'lances-popup': [320, 100],   // 3 rows × 34px
 }
 
 function createFeatureWindow(gameWinId: number, featureId: string): void {
@@ -219,6 +219,13 @@ function startRadarPolling(): void {
       if (data) {
         latestGameData = data
         win.webContents.send('gameDataUpdate', data)
+        // Envia tempo do jogo também ao painel de lances do mesmo jogo
+        const gwId = key.split(':')[0]
+        const gameTime = { time: data.time ?? null, extraTime: data.extraTime ?? null }
+        const lancesWin = featureWins.get(`${gwId}:lances`)
+        if (lancesWin && !lancesWin.isDestroyed()) lancesWin.webContents.send('gameTimeUpdate', gameTime)
+        const lancesPopup = featureWins.get(`${gwId}:lances-popup`)
+        if (lancesPopup && !lancesPopup.isDestroyed()) lancesPopup.webContents.send('gameTimeUpdate', gameTime)
       }
     }
     if (!hasActive && radarPollInterval) {

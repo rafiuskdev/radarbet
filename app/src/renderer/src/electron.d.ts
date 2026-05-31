@@ -65,10 +65,16 @@ export interface RfGame {
   country: string
 }
 
+export interface GameTime {
+  time:      string | null
+  extraTime: string | null
+}
+
 declare global {
   interface Window {
     electronAPI: {
       onGameDataUpdate:        (cb: (data: GameData) => void) => () => void
+      onGameTimeUpdate:        (cb: (data: GameTime) => void) => () => void
       onBet365Closed:          (cb: () => void)              => () => void
       onGameWindowDataUpdated: (cb: (game: MockGame) => void) => () => void
       getBet365Games:          () => Promise<{ games: Game[] }>
