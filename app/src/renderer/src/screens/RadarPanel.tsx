@@ -69,7 +69,7 @@ export function RadarPanel({ game, onBack }: Props) {
   const [soundEnabled,    setSoundEnabled]    = useState(true)
   const [soundVolume,     setSoundVolume]     = useState(25)
   const [opacity,      setOpacity]      = useState(1.0)
-  const [fontSize,     setFontSize]     = useState(12) // px base; zoom = fontSize/12
+  const [fontSize,     setFontSize]     = useState(14) // px base; zoom = fontSize/12
 
   const prevOdds          = useRef<Record<string, number | null>>({})
   const changedAt         = useRef<Record<string, number>>({})
@@ -234,7 +234,7 @@ export function RadarPanel({ game, onBack }: Props) {
     >
       <div id="rb-flash-overlay" />
 
-      {/* Topbar */}
+      {/* Topbar — fora do overlay, sempre visível */}
       <div className="radar-topbar rb-drag">
         <button className="gm-back-btn rb-no-drag" onClick={onBack} title="Voltar ao menu">←</button>
         <span className="rb-mkt-tag">{gameData?.goals ? (isHalf ? 'HT' : 'FT') : '—'}</span>
@@ -257,6 +257,7 @@ export function RadarPanel({ game, onBack }: Props) {
         </div>
 
         <span className="rb-topbar-time">{gameData?.time || '--:--'}</span>
+        {gameData?.extraTime && <span className="rb-extra-time">{gameData.extraTime}</span>}
         <span className="rb-row-spacer" />
         <button className="rb-btn-switch rb-no-drag" title="Minimizar" onClick={() => window.electronAPI.minimizeWindow()}>−</button>
         <button
@@ -266,6 +267,10 @@ export function RadarPanel({ game, onBack }: Props) {
         >⚙</button>
         <button className="rb-close rb-no-drag" onClick={() => window.close()}>×</button>
       </div>
+
+      {/* Corpo — overlay de suspensão cobre apenas esta área */}
+      <div className="rb-body">
+      {gameData?.suspended && <div className="rb-suspended-overlay">🔒</div>}
 
       {/* Referência do jogo */}
       <div className="radar-game-ref rb-drag">
@@ -397,6 +402,8 @@ export function RadarPanel({ game, onBack }: Props) {
 
         <div className="rb-status">{statusText}</div>
       </>}
+
+      </div>{/* /rb-body */}
 
       <div ref={resizeRef} id="rb-resize-handle" className="rb-no-drag" />
     </div>

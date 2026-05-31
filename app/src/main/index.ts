@@ -111,7 +111,7 @@ function createGameWindow(game: unknown): void {
 // ── Feature windows ───────────────────────────────────────────────────────────
 
 const FEATURE_SIZES: Record<string, [number, number]> = {
-  radar:         [280, 450],
+  radar:         [300, 300],
   feature2:      [480, 380],
   lances:        [320, 355],
   'lances-popup': [320, 84],    // 3 rows × 28px
