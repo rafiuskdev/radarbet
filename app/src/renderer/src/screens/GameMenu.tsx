@@ -22,6 +22,12 @@ const FEATURES: Feature[] = [
     description: 'Acompanhe ataques e lances ao vivo via radarfutebol',
   },
   {
+    id:          'mercado',
+    icon:        '📈',
+    title:       'Radar de Mercado',
+    description: 'Histórico de preços Betfair (back/lay)',
+  },
+  {
     id:          'feature2',
     icon:        '⬜',
     title:       'Funcionalidade 2',
