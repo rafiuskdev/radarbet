@@ -71,6 +71,20 @@ export interface GameTime {
   extraTime: string | null
 }
 
+export interface OddsSnapshot {
+  ts:           number
+  back:         number | null
+  lay:          number | null
+  lastTraded:   number | null
+  totalMatched: number | null
+}
+
+export interface BetfairMarketInfo {
+  marketId:   string
+  marketType: string
+  line:       number
+}
+
 declare global {
   interface Window {
     electronAPI: {
@@ -98,6 +112,11 @@ declare global {
       getRfGames:       () => Promise<RfGame[]>
       onRfGamesUpdate:  (cb: (games: RfGame[]) => void) => () => void
       openRfGame:       (rfGame: { team1: string; team2: string }) => Promise<{ ok: boolean; error?: string; gameKey?: string }>
+      onBetfairUpdate:      (cb: (snap: OddsSnapshot) => void) => () => void
+      betfairSearchMarkets: (team1: string, team2: string, score: string, isHalf: boolean) => Promise<{ markets: BetfairMarketInfo[]; defaultLine: number }>
+      betfairStartPolling:  (marketId: string, intervalMs: number) => Promise<{ ok: boolean }>
+      betfairStopPolling:   () => Promise<void>
+      betfairGetHistory:    () => Promise<OddsSnapshot[]>
     }
   }
 }

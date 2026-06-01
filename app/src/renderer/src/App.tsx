@@ -6,6 +6,7 @@ import { RadarPanel }       from './screens/RadarPanel'
 import { Feature2Panel }    from './screens/Feature2Panel'
 import { LancesPanel }      from './screens/LancesPanel'
 import { LancesPopupPanel } from './screens/LancesPopupPanel'
+import { MercadoPanel }     from './screens/MercadoPanel'
 import { RfListPanel }      from './screens/RfListPanel'
 import type { LiveGame } from './electron.d'
 import './App.css'
@@ -69,6 +70,11 @@ export default function App() {
 
   if (MODE === 'lances') {
     return <div className="radarbet-root"><LancesPanel onBack={() => window.close()} /></div>
+  }
+
+  if (MODE === 'mercado') {
+    if (!selectedGame) return <div className="radarbet-root" />
+    return <div className="radarbet-root"><MercadoPanel game={selectedGame} onBack={() => window.close()} /></div>
   }
 
   if (MODE === 'lances-popup') {

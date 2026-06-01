@@ -65,4 +65,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('liveGamesUpdate', listener)
     return (): void => { ipcRenderer.off('liveGamesUpdate', listener) }
   },
+  onBetfairUpdate: (cb: (snap: unknown) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, snap: unknown): void => cb(snap)
+    ipcRenderer.on('betfairUpdate', listener)
+    return (): void => { ipcRenderer.off('betfairUpdate', listener) }
+  },
+  betfairSearchMarkets: (team1: string, team2: string, score: string, isHalf: boolean) =>
+    ipcRenderer.invoke('betfair:searchMarkets', { team1, team2, score, isHalf }),
+  betfairStartPolling: (marketId: string, intervalMs: number) =>
+    ipcRenderer.invoke('betfair:startPolling', { marketId, intervalMs }),
+  betfairStopPolling: () =>
+    ipcRenderer.invoke('betfair:stopPolling'),
+  betfairGetHistory: () =>
+    ipcRenderer.invoke('betfair:getHistory'),
 })

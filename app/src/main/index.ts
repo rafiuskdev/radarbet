@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { launchChrome, closeBrowser, scrapeLiveGames, scrapeGameData, navigateBet365GamePage, closeBet365GamePage, getBet365GamePage, getListPage } from './chromeBridge'
 import { launchRfChrome, navigateToRfGame, scrapeRfMatchState, closeRfGamePage, closeRfBrowser, onGamesUpdate } from './radarFutebolBridge'
+import { startBetfairPolling, stopBetfairPolling, getBetfairHistory, searchBetfairMarketsForGame } from './betfairBridge'
 
 let overlayWin: BrowserWindow | null = null
 
@@ -111,10 +112,11 @@ function createGameWindow(game: unknown): void {
 // ── Feature windows ───────────────────────────────────────────────────────────
 
 const FEATURE_SIZES: Record<string, [number, number]> = {
-  radar:         [300, 300],
-  feature2:      [480, 380],
-  lances:        [320, 355],
-  'lances-popup': [320, 124],   // 3 rows × 34px + info bar 22px
+  radar:          [300, 300],
+  feature2:       [480, 380],
+  lances:         [320, 355],
+  'lances-popup': [320, 124],
+  mercado:        [620, 440],
 }
 
 function createFeatureWindow(gameWinId: number, featureId: string): void {
@@ -148,10 +150,10 @@ function createFeatureWindow(gameWinId: number, featureId: string): void {
   featureWins.set(compositeKey, win)
   win.on('closed', () => {
     featureWins.delete(compositeKey)
-    if (featureId === 'radar') closeBet365GamePage(compositeKey).catch(() => {})
+    if (featureId === 'radar')   closeBet365GamePage(compositeKey).catch(() => {})
+    if (featureId === 'mercado') stopBetfairPolling(compositeKey)
     if (featureId === 'lances') {
       closeRfGamePage(compositeKey).catch(() => {})
-      // Fecha o popup se estiver aberto
       const popupWin = featureWins.get(compositeKey + '-popup')
       if (popupWin && !popupWin.isDestroyed()) popupWin.close()
     }
@@ -354,6 +356,39 @@ function setupIPC(): void {
   ipcMain.handle('showFeatureWindow', (_e, featureId: string) => {
     // Com chaves compostas, não é possível lookup directo — no-op
     void featureId
+  })
+
+  ipcMain.handle('betfair:searchMarkets', async (_e, { team1, team2, score, isHalf }: { team1: string; team2: string; score: string; isHalf: boolean }) => {
+    return searchBetfairMarketsForGame(team1, team2, score, isHalf)
+  })
+
+  ipcMain.handle('betfair:startPolling', (event, { marketId, intervalMs }: { marketId: string; intervalMs: number }) => {
+    const sender = BrowserWindow.fromWebContents(event.sender)
+    if (!sender) return { ok: false }
+    const gwId = findGameWinId(sender)
+    if (!gwId) return { ok: false }
+    const pageKey = `${gwId}:mercado`
+    const win = featureWins.get(pageKey)
+    startBetfairPolling(marketId, pageKey, intervalMs, snap => {
+      if (win && !win.isDestroyed()) win.webContents.send('betfairUpdate', snap)
+    })
+    return { ok: true }
+  })
+
+  ipcMain.handle('betfair:stopPolling', (event) => {
+    const sender = BrowserWindow.fromWebContents(event.sender)
+    if (!sender) return
+    const gwId = findGameWinId(sender)
+    if (!gwId) return
+    stopBetfairPolling(`${gwId}:mercado`)
+  })
+
+  ipcMain.handle('betfair:getHistory', (event) => {
+    const sender = BrowserWindow.fromWebContents(event.sender)
+    if (!sender) return []
+    const gwId = findGameWinId(sender)
+    if (!gwId) return []
+    return getBetfairHistory(`${gwId}:mercado`)
   })
 
   ipcMain.handle('getBet365Games', () => {
