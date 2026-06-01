@@ -8,12 +8,18 @@
     "build": "electron-vite build",
     "start": "electron-vite dev",
     "dist": "electron-vite build && electron-builder",
-    "dist:win": "electron-vite build && electron-builder --win"
+    "dist:win": "electron-vite build && electron-builder --win",
+    "release": "electron-vite build && electron-builder --win --publish always"
   },
   "build": {
     "appId": "com.radarbet.app",
     "productName": "RadarBet",
     "asar": false,
+    "publish": {
+      "provider": "github",
+      "owner": "rafiuskdev",
+      "repo": "radarbet"
+    },
     "directories": {
       "output": "dist"
     },
@@ -32,7 +38,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -46,6 +54,7 @@
     }
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "playwright": "^1.60.0",
     "puppeteer": "^25.1.0",
     "react": "^18.3.1",

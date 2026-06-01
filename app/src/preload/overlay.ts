@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return (): void => { ipcRenderer.off('gameWindowDataUpdated', listener) }
   },
   getBet365Games:    () => ipcRenderer.invoke('getBet365Games'),
-  openBet365:        (teams?: { team1: string; team2: string }) => ipcRenderer.invoke('openBet365', teams),
+  openBet365:        (region?: 'uk' | 'br') => ipcRenderer.invoke('openBet365', region),
   focusBet365:       () => ipcRenderer.invoke('focusBet365'),
   resizeWindow:      (w: number, h: number) => ipcRenderer.invoke('resizeWindow', w, h),
   openGameWindow:    (game: unknown) => ipcRenderer.invoke('openGameWindow', game),
@@ -65,6 +65,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('liveGamesUpdate', listener)
     return (): void => { ipcRenderer.off('liveGamesUpdate', listener) }
   },
+  onUpdateAvailable: (cb: (info: { version: string }) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, info: { version: string }): void => cb(info)
+    ipcRenderer.on('update-available', listener)
+    return (): void => { ipcRenderer.off('update-available', listener) }
+  },
+  onUpdateProgress: (cb: (info: { percent: number }) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, info: { percent: number }): void => cb(info)
+    ipcRenderer.on('update-progress', listener)
+    return (): void => { ipcRenderer.off('update-progress', listener) }
+  },
+  onUpdateReady: (cb: () => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('update-ready', listener)
+    return (): void => { ipcRenderer.off('update-ready', listener) }
+  },
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate:  () => ipcRenderer.invoke('update:install'),
   onBetfairUpdate: (cb: (snap: unknown) => void) => {
     const listener = (_: Electron.IpcRendererEvent, snap: unknown): void => cb(snap)
     ipcRenderer.on('betfairUpdate', listener)

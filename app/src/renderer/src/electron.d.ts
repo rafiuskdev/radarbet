@@ -93,7 +93,7 @@ declare global {
       onBet365Closed:          (cb: () => void)              => () => void
       onGameWindowDataUpdated: (cb: (game: MockGame) => void) => () => void
       getBet365Games:          () => Promise<{ games: Game[] }>
-      openBet365:              (teams?: { team1: string; team2: string }) => Promise<{ ok: boolean }>
+      openBet365:              (region?: 'uk' | 'br') => Promise<{ ok: boolean }>
       focusBet365:             () => Promise<{ ok: boolean }>
       resizeWindow:            (w: number, h: number) => Promise<void>
       openGameWindow:          (game: MockGame) => Promise<{ ok: boolean }>
@@ -117,6 +117,11 @@ declare global {
       betfairStartPolling:  (marketId: string, intervalMs: number) => Promise<{ ok: boolean }>
       betfairStopPolling:   () => Promise<void>
       betfairGetHistory:    () => Promise<OddsSnapshot[]>
+      onUpdateAvailable: (cb: (info: { version: string }) => void) => () => void
+      onUpdateProgress:  (cb: (info: { percent: number }) => void) => () => void
+      onUpdateReady:     (cb: () => void) => () => void
+      downloadUpdate:    () => Promise<void>
+      installUpdate:     () => Promise<void>
     }
   }
 }

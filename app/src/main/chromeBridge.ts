@@ -93,6 +93,18 @@ async function getPuppeteer() {
   return mod.default
 }
 
+// ─── Região / domínio da bet365 ──────────────────────────────────────────────
+
+const BET365_DOMAINS: Record<'uk' | 'br', string> = {
+  uk: 'https://www.bet365.com',
+  br: 'https://www.bet365.bet.br',
+}
+let activeBet365BaseUrl = BET365_DOMAINS.uk
+
+export function setBet365Region(region: 'uk' | 'br'): void {
+  activeBet365BaseUrl = BET365_DOMAINS[region] ?? BET365_DOMAINS.uk
+}
+
 // ─── Estado do browser ────────────────────────────────────────────────────────
 
 let browser:    Browser | null = null
@@ -126,7 +138,7 @@ export async function launchChrome(): Promise<void> {
 
   const pages = await browser.pages()
   listPage = pages[0] ?? await browser.newPage()
-  await listPage.goto('https://www.bet365.com/#/IP/B1', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  await listPage.goto(`${activeBet365BaseUrl}/#/IP/B1`, { waitUntil: 'domcontentloaded', timeout: 30_000 })
 
   // Chama APÓS goto — janela do Chrome certamente existe e está estável
   if (chromePid) hideChromeFromTaskbar(chromePid)

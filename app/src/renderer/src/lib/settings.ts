@@ -8,6 +8,7 @@ export const SKEYS = {
   lancesLineCount:   'rb.lances.lineCount',
   popupLines:        'rb.popup.lines',
   popupBgOpacity:    'rb.popup.bgOpacity',
+  bet365Region:      'rb.bet365.region',
 } as const
 
 export function readFloat(key: string, def: number): number {

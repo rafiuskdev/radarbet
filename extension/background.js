@@ -1,3 +1,9 @@
+const BET365_PATTERNS = ['*://*.bet365.com/*', '*://*.bet365.bet.br/*'];
+
+function getBet365Domain(cb) {
+  chrome.storage.local.get('bet365Domain', r => cb(r.bet365Domain || 'www.bet365.com'));
+}
+
 // Responde perguntas dos content scripts
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'getTabId') {
@@ -5,15 +11,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  if (msg.action === 'setRegion') {
+    const domain = msg.region === 'br' ? 'www.bet365.bet.br' : 'www.bet365.com';
+    chrome.storage.local.set({ bet365Domain: domain });
+    sendResponse({ ok: true });
+    return;
+  }
+
   if (msg.action === 'getBet365Games') {
-    chrome.tabs.query({ url: '*://*.bet365.com/*' }, (tabs) => {
-      if (!tabs.length) { sendResponse({ games: [] }); return; }
-      const keys = tabs.map(t => `radar_${t.id}`);
+    const results = [];
+    let pending = BET365_PATTERNS.length;
+    const finish = () => {
+      if (--pending > 0) return;
+      if (!results.length) { sendResponse({ games: [] }); return; }
+      const keys = results.map(t => `radar_${t.id}`);
       chrome.storage.local.get(keys, (stored) => {
-        const games = tabs
+        const games = results
           .map(t => ({ tabId: t.id, data: stored[`radar_${t.id}`] || null }))
           .filter(g => g.data);
         sendResponse({ games });
+      });
+    };
+    BET365_PATTERNS.forEach(pattern => {
+      chrome.tabs.query({ url: pattern }, tabs => {
+        results.push(...tabs);
+        finish();
       });
     });
     return true;
@@ -21,34 +43,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'openBet365') {
     const teams = msg.teams;
-    const url   = 'https://www.bet365.com/#/IP';
+    getBet365Domain(domain => {
+      const url = `https://${domain}/#/IP`;
 
-    const afterOpen = (tabId) => {
-      if (!teams) return;
-      // Aguarda o tab carregar e envia as equipas para o scraper navegar
-      const listener = (tid, changeInfo) => {
-        if (tid !== tabId || changeInfo.status !== 'complete') return;
-        chrome.tabs.onUpdated.removeListener(listener);
-        // Retry: tenta enviar até 6x com intervalos crescentes (SPA precisa de tempo)
-        let attempt = 0;
-        const trySend = () => {
-          chrome.tabs.sendMessage(tabId, { action: 'navigateToGame', teams }, (res) => {
-            if (chrome.runtime.lastError || !res?.ok) {
-              if (attempt++ < 5) setTimeout(trySend, 2000);
-            }
-          });
+      const afterOpen = (tabId) => {
+        if (!teams) return;
+        // Aguarda o tab carregar e envia as equipas para o scraper navegar
+        const listener = (tid, changeInfo) => {
+          if (tid !== tabId || changeInfo.status !== 'complete') return;
+          chrome.tabs.onUpdated.removeListener(listener);
+          // Retry: tenta enviar até 6x com intervalos crescentes (SPA precisa de tempo)
+          let attempt = 0;
+          const trySend = () => {
+            chrome.tabs.sendMessage(tabId, { action: 'navigateToGame', teams }, (res) => {
+              if (chrome.runtime.lastError || !res?.ok) {
+                if (attempt++ < 5) setTimeout(trySend, 2000);
+              }
+            });
+          };
+          setTimeout(trySend, 4500);
         };
-        setTimeout(trySend, 4500);
+        chrome.tabs.onUpdated.addListener(listener);
       };
-      chrome.tabs.onUpdated.addListener(listener);
-    };
 
-    chrome.windows.create({ url, incognito: true }, (win) => {
-      if (chrome.runtime.lastError) {
-        chrome.tabs.create({ url }, (tab) => afterOpen(tab.id));
-      } else {
-        afterOpen(win.tabs[0].id);
-      }
+      chrome.windows.create({ url, incognito: true }, (win) => {
+        if (chrome.runtime.lastError) {
+          chrome.tabs.create({ url }, (tab) => afterOpen(tab.id));
+        } else {
+          afterOpen(win.tabs[0].id);
+        }
+      });
     });
     sendResponse({ ok: true });
     return;
@@ -92,7 +116,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 // Clique no ícone → toggle manual em qualquer site que não seja bet365
 chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab.url || tab.url.includes('bet365.com')) return;
+  if (!tab.url || tab.url.includes('bet365.com') || tab.url.includes('bet365.bet.br')) return;
 
   try {
     await chrome.tabs.sendMessage(tab.id, { action: 'toggleRadar' });
