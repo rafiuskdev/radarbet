@@ -34,6 +34,13 @@ function getAdjacentOdds(mkt: number | null) {
 
 function fmt(v: number | null): string { return v != null ? v.toFixed(2) : '—' }
 
+function calcTicksPerMin(fairOdd: number, minsRemaining: number): number {
+  if (minsRemaining <= 0 || fairOdd <= 1.0) return 0
+  return (fairOdd * Math.log(fairOdd) * 100) / minsRemaining
+}
+
+function fmtTick(v: number | null): string { return v != null ? v.toFixed(2) : '—' }
+
 let _audioCtx: AudioContext | null = null
 function playBeep(volume = 0.25, freq = 880, dur = 0.12) {
   try {
@@ -70,6 +77,8 @@ export function RadarPanel({ game, onBack }: Props) {
   const [soundVolume,     setSoundVolume]     = useState(() => Math.round(readFloat(SKEYS.radarSoundVolume, 25)))
   const [opacity,      setOpacity]      = useState(() => readFloat(SKEYS.radarOpacity, 1.0))
   const [fontSize,     setFontSize]     = useState(() => Math.round(readFloat(SKEYS.radarFontSize, 14)))
+  const [extraTimeInput, setExtraTimeInput] = useState('')
+  const [oddSimInput,    setOddSimInput]    = useState('')
 
   const prevOdds          = useRef<Record<string, number | null>>({})
   const changedAt         = useRef<Record<string, number>>({})
@@ -245,6 +254,29 @@ export function RadarPanel({ game, onBack }: Props) {
   const isNx1Value = nx1Odd   != null && nx1Fair != null && nx1Odd   >= nx1Fair
   const isNx2Value = nx2Odd   != null && nx2Fair != null && nx2Odd   >= nx2Fair
 
+  // Ticks/minuto — derivada da curva de Poisson: |dO/dt| / 0.01
+  const currentMinute = gameData?.time ? (parseInt(gameData.time.split(':')[0]) || 0) : null
+  const autoExtraMin  = gameData?.extraTime ? (parseInt(gameData.extraTime.replace('+', '')) || 0) : 0
+  const tBase         = isHalf ? 45 : 90
+  const minsRem       = currentMinute != null ? Math.max(0.1, tBase + autoExtraMin - currentMinute) : null
+
+  const autoTicks = (g1Fair != null && g1Fair > 1.0 && minsRem != null)
+    ? calcTicksPerMin(g1Fair, minsRem) : null
+
+  const simExtraTicks = (() => {
+    if (!extraTimeInput || g1Fair == null || g1Fair <= 1.0 || currentMinute == null) return null
+    const extra = parseInt(extraTimeInput)
+    if (isNaN(extra)) return null
+    return calcTicksPerMin(g1Fair, Math.max(0.1, tBase + extra - currentMinute))
+  })()
+
+  const simOddTicks = (() => {
+    if (!oddSimInput || minsRem == null) return null
+    const simOdd = parseFloat(oddSimInput)
+    if (isNaN(simOdd) || simOdd <= 1.0) return null
+    return calcTicksPerMin(simOdd, minsRem)
+  })()
+
   const statusText = (() => {
     if (!gameData) return ''
     const ts = new Date(gameData.updatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -354,6 +386,34 @@ export function RadarPanel({ game, onBack }: Props) {
         <div className="rb-row rb-row-timer rb-drag">
           <span className="rb-timer-icon" style={{ color: timerColor }}>⊙</span>
           <span className="rb-timer"      style={{ color: timerColor }}>{timerTxt}</span>
+        </div>
+
+        <div className="rb-row rb-row-ticks rb-drag">
+          <span className="rb-tick-icon">⚡</span>
+          <span className="rb-tick-val">{fmtTick(autoTicks)}</span>
+          <span className="rb-tick-unit">t/m</span>
+          <span className="rb-tick-div" />
+          <span className="rb-tick-pfx">+</span>
+          <input
+            type="number"
+            min="0" max="30" step="1"
+            value={extraTimeInput}
+            onChange={e => setExtraTimeInput(e.target.value)}
+            className="rb-tick-inp rb-no-drag"
+            placeholder="0"
+          />
+          <span className="rb-tick-sim">{simExtraTicks != null ? fmtTick(simExtraTicks) : ''}</span>
+          <span className="rb-tick-div" />
+          <span className="rb-tick-pfx">@</span>
+          <input
+            type="number"
+            min="1.01" step="0.01"
+            value={oddSimInput}
+            onChange={e => setOddSimInput(e.target.value)}
+            className="rb-tick-inp rb-no-drag"
+            placeholder="—"
+          />
+          <span className="rb-tick-sim">{simOddTicks != null ? fmtTick(simOddTicks) : ''}</span>
         </div>
 
         <div className="rb-row rb-row-nx rb-drag">
