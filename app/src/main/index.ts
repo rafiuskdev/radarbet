@@ -1,5 +1,11 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
+import log from 'electron-log'
+
+// Redireciona console do main process para ficheiro de log
+log.transports.file.level = 'debug'
+log.transports.console.level = 'debug'
+Object.assign(console, log.functions)
 import { launchChrome, closeBrowser, scrapeLiveGames, scrapeGameData, navigateBet365GamePage, closeBet365GamePage, getBet365GamePage, getListPage, setBet365Region } from './chromeBridge'
 import { launchRfChrome, navigateToRfGame, scrapeRfMatchState, closeRfGamePage, closeRfBrowser, onGamesUpdate } from './radarFutebolBridge'
 import { startBetfairPolling, stopBetfairPolling, getBetfairHistory, searchBetfairMarketsForGame } from './betfairBridge'

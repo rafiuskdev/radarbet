@@ -1,6 +1,6 @@
 {
   "name": "radarbet",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "RadarBet — Radar de odds ao vivo",
   "main": "out/main/index.js",
   "scripts": {
@@ -54,6 +54,7 @@
     }
   },
   "dependencies": {
+    "electron-log": "^5.4.4",
     "electron-updater": "^6.8.3",
     "playwright": "^1.60.0",
     "puppeteer": "^25.1.0",

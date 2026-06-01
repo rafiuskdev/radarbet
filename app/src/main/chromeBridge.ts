@@ -140,7 +140,6 @@ export async function launchChrome(): Promise<void> {
   listPage = pages[0] ?? await browser.newPage()
   await listPage.goto(`${activeBet365BaseUrl}/#/IP/B1`, { waitUntil: 'domcontentloaded', timeout: 30_000 })
 
-  // Chama APÓS goto — janela do Chrome certamente existe e está estável
   if (chromePid) hideChromeFromTaskbar(chromePid)
 }
 
@@ -274,11 +273,11 @@ export async function scrapeGameData(page: Page): Promise<unknown> {
 
         for (const el of Array.from(labelEls)) {
           const text = el.textContent?.trim() ?? ''
-          if (!/gol[os]|goal/i.test(text)) continue
+          if (!/gols?|golo|goal/i.test(text)) continue
           const pod = el.closest('.gl-MarketGroupPod, .sip-MarketGroup')
           if (!pod) continue
           if (/parte|half/i.test(text)) halfContainers.push({ pod, label: text })
-          else if (/encontro|match|game/i.test(text)) matchContainers.push({ pod, label: text })
+          else if (/encontro|match|game|partida/i.test(text)) matchContainers.push({ pod, label: text })
         }
 
         const targets = halfContainers.length > 0 ? halfContainers : matchContainers
@@ -307,8 +306,8 @@ export async function scrapeGameData(page: Page): Promise<unknown> {
         const labelEls = document.querySelectorAll('.sip-MarketGroupButton_Text, .gl-MarketGroupButton_Text')
         for (const el of Array.from(labelEls)) {
           const text = el.textContent?.trim() ?? ''
-          if (!/gol[os]|goal/i.test(text)) continue
-          if (!/encontro|match|game|parte|half/i.test(text)) continue
+          if (!/gols?|golo|goal/i.test(text)) continue
+          if (!/encontro|match|game|partida|parte|half/i.test(text)) continue
           const pod = el.closest('.gl-MarketGroupPod, .sip-MarketGroup')
           if (!pod) continue
           if (
@@ -323,7 +322,7 @@ export async function scrapeGameData(page: Page): Promise<unknown> {
       function readNextGoalOdds(): unknown {
         for (const el of Array.from(document.querySelectorAll('.sip-MarketGroupButton_Text, .gl-MarketGroupButton_Text'))) {
           const text = el.textContent?.toLowerCase() ?? ''
-          if (!text.includes('golo') && !text.includes('próximo gol') && !text.includes('next goal')) continue
+          if (!/golo|próximo gol|next goal|1[°º]\s*gol/i.test(text)) continue
           const pod = el.closest('.gl-MarketGroupPod, .sip-MarketGroup')
           if (!pod) continue
           const names = pod.querySelectorAll('.gl-ParticipantBorderless_Name')
@@ -402,7 +401,6 @@ export async function navigateBet365GamePage(
       cdpSession = await listPage.createCDPSession()
       const winInfo = await cdpSession.send('Browser.getWindowForTarget') as { windowId: number; bounds: { windowState: string } }
       windowId = winInfo.windowId
-      // Garante janela com tamanho usável (mesmo off-screen) para o click funcionar corretamente
       await cdpSession.send('Browser.setWindowBounds', {
         windowId,
         bounds: { windowState: 'normal', width: 1280, height: 900, left: -3300, top: -3300 },
