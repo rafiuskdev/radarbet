@@ -1,6 +1,9 @@
 import { useState, useMemo, useEffect } from 'react'
 import type { LiveGame } from '../electron.d'
 import { SettingsPanel } from './SettingsPanel'
+import { SKEYS, writeSetting } from '../lib/settings'
+
+type Bet365Region = 'uk' | 'br'
 
 // ─── Skeleton de carregamento ─────────────────────────────────────────────────
 
@@ -34,6 +37,12 @@ export function Dashboard({ onSelectGame }: Props) {
   const [selectedLeague,  setSelectedLeague]  = useState('all')
   const [selectedCountry, setSelectedCountry] = useState('all')
   const [showSettings,    setShowSettings]    = useState(false)
+  const [updateState, setUpdateState] = useState<
+    | { phase: 'idle' }
+    | { phase: 'available'; version: string }
+    | { phase: 'downloading'; percent: number }
+    | { phase: 'ready' }
+  >({ phase: 'idle' })
   // Para adicionar novos filtros: declare mais estados aqui e adicione ao useMemo abaixo
 
   useEffect(() => {
@@ -46,9 +55,23 @@ export function Dashboard({ onSelectGame }: Props) {
     return off
   }, [])
 
-  const handleSync = () => {
+  useEffect(() => {
+    const offAvailable = window.electronAPI.onUpdateAvailable(({ version }) =>
+      setUpdateState({ phase: 'available', version })
+    )
+    const offProgress = window.electronAPI.onUpdateProgress(({ percent }) =>
+      setUpdateState({ phase: 'downloading', percent })
+    )
+    const offReady = window.electronAPI.onUpdateReady(() =>
+      setUpdateState({ phase: 'ready' })
+    )
+    return () => { offAvailable(); offProgress(); offReady() }
+  }, [])
+
+  const handleCountrySync = (region: Bet365Region) => {
+    writeSetting(SKEYS.bet365Region, region)
     setLiveGames([]) // [] = skeleton (conectando)
-    window.electronAPI.openBet365()
+    window.electronAPI.openBet365(region)
   }
 
   const games = liveGames ?? []
@@ -91,15 +114,50 @@ export function Dashboard({ onSelectGame }: Props) {
         <button className="rb-close rb-no-drag" onClick={() => window.close()}>×</button>
       </header>
 
-      {/* Estado: não conectado → botão central */}
+      {/* Banner de atualização */}
+      {updateState.phase === 'available' && (
+        <div className="update-banner rb-no-drag">
+          <span className="update-banner-text">Nova versão {updateState.version} disponível</span>
+          <button className="update-banner-btn" onClick={() => window.electronAPI.downloadUpdate()}>
+            Baixar
+          </button>
+        </div>
+      )}
+      {updateState.phase === 'downloading' && (
+        <div className="update-banner rb-no-drag">
+          <span className="update-banner-text">Baixando… {updateState.percent}%</span>
+          <div className="update-progress-bar">
+            <div className="update-progress-fill" style={{ width: `${updateState.percent}%` }} />
+          </div>
+        </div>
+      )}
+      {updateState.phase === 'ready' && (
+        <div className="update-banner update-banner-ready rb-no-drag">
+          <span className="update-banner-text">Atualização pronta</span>
+          <button className="update-banner-btn" onClick={() => window.electronAPI.installUpdate()}>
+            Reiniciar agora
+          </button>
+        </div>
+      )}
+
+      {/* Estado: não conectado → escolha de país */}
       {isNotConnected && (
         <div className="dash-empty-state rb-no-drag">
           <div className="dash-sync-icon">⚡</div>
-          <p className="dash-sync-label">Nenhum jogo carregado</p>
-          <p className="dash-sync-sub">Conecte ao bet365 para ver os jogos ao vivo</p>
-          <button className="dash-sync-btn" onClick={handleSync}>
-            ⟳ Sincronizar Jogos
-          </button>
+          <p className="dash-sync-label">Escolha o seu país</p>
+          <p className="dash-sync-sub">Selecione para sincronizar com a bet365</p>
+          <div className="dash-country-grid">
+            <button className="dash-country-btn" onClick={() => handleCountrySync('uk')}>
+              <span className="dash-country-flag">🇬🇧</span>
+              <span className="dash-country-name">Reino Unido</span>
+              <span className="dash-country-domain">bet365.com</span>
+            </button>
+            <button className="dash-country-btn" onClick={() => handleCountrySync('br')}>
+              <span className="dash-country-flag">🇧🇷</span>
+              <span className="dash-country-name">Brasil</span>
+              <span className="dash-country-domain">bet365.bet.br</span>
+            </button>
+          </div>
         </div>
       )}
 

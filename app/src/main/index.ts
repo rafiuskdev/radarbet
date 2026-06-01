@@ -1,8 +1,9 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
-import { launchChrome, closeBrowser, scrapeLiveGames, scrapeGameData, navigateBet365GamePage, closeBet365GamePage, getBet365GamePage, getListPage } from './chromeBridge'
+import { launchChrome, closeBrowser, scrapeLiveGames, scrapeGameData, navigateBet365GamePage, closeBet365GamePage, getBet365GamePage, getListPage, setBet365Region } from './chromeBridge'
 import { launchRfChrome, navigateToRfGame, scrapeRfMatchState, closeRfGamePage, closeRfBrowser, onGamesUpdate } from './radarFutebolBridge'
 import { startBetfairPolling, stopBetfairPolling, getBetfairHistory, searchBetfairMarketsForGame } from './betfairBridge'
+import { setupAutoUpdater } from './updater'
 
 let overlayWin: BrowserWindow | null = null
 
@@ -258,7 +259,8 @@ function setupIPC(): void {
     return latestLiveGames
   })
 
-  ipcMain.handle('openBet365', async () => {
+  ipcMain.handle('openBet365', async (_e, region?: 'uk' | 'br') => {
+    if (region) setBet365Region(region)
     if (!getListPage()) await startChrome()
     return { ok: true }
   })
@@ -408,6 +410,7 @@ app.commandLine.appendSwitch('disable-extensions')
 app.whenReady().then(() => {
   setupIPC()
   createOverlay()
+  if (overlayWin) setupAutoUpdater(overlayWin)
   app.on('activate', () => { if (!overlayWin) createOverlay() })
 })
 

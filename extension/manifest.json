@@ -6,6 +6,7 @@
   "permissions": ["activeTab", "scripting", "storage", "tabs"],
   "host_permissions": [
     "*://*.bet365.com/*",
+    "*://*.bet365.bet.br/*",
     "*://rushflows.vip/*"
   ],
   "background": {
@@ -13,7 +14,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.bet365.com/*"],
+      "matches": ["*://*.bet365.com/*", "*://*.bet365.bet.br/*"],
       "js": ["scraper.js"],
       "run_at": "document_idle"
     },

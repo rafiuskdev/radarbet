@@ -25,3 +25,10 @@ release/
 # Environment
 .env
 .env.local
+
+# Debug / data captures
+app/*.json
+app/*.png
+app/*.html
+odds_justas.txt
+*.png
