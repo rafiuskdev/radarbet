@@ -896,6 +896,30 @@ body {
 .rb-timer      { font-size: 11px; font-weight: 700; color: #4a5a6a; letter-spacing: 0.5px; }
 .rb-extra-time { font-size: 10px; font-weight: 700; color: #f08030; margin-left: 4px; }
 
+.rb-row-ticks { padding-top: 2px; padding-bottom: 3px; gap: 3px; border-top: 1px solid rgba(255,255,255,0.04); }
+
+.rb-tick-icon { font-size: 9px; color: #4a6a8a; }
+.rb-tick-val  { font-size: 12px; font-weight: 700; color: #c8d0db; min-width: 28px; }
+.rb-tick-unit { font-size: 9px; color: #3a4a58; margin-right: 1px; }
+.rb-tick-div  { width: 1px; height: 10px; background: #1e2e3e; margin: 0 2px; flex-shrink: 0; }
+.rb-tick-pfx  { font-size: 10px; font-weight: 700; color: #4a6a8a; }
+.rb-tick-inp {
+  width: 26px;
+  background: #0c1820;
+  border: 1px solid #1a2a38;
+  border-radius: 3px;
+  color: #7090b0;
+  font-size: 9px;
+  padding: 1px 2px;
+  text-align: center;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.rb-tick-inp:focus { border-color: #2a4a6a; color: #90b0d0; }
+.rb-tick-inp::-webkit-inner-spin-button,
+.rb-tick-inp::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.rb-tick-sim { font-size: 10px; color: #5a7a9a; min-width: 22px; }
+
 .rb-row-nx {
   padding-top: 5px;
   padding-bottom: 7px;
