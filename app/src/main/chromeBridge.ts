@@ -98,7 +98,8 @@ async function getPuppeteer() {
 let browser:    Browser | null = null
 let listPage:   Page | null = null
 let chromePid:  number | null = null
-const gamePages = new Map<string, Page>()
+const gamePages  = new Map<string, Page>()
+const gameUrlCache = new Map<string, string>() // key: `${team1}|${team2}` → URL do evento bet365
 
 export async function launchChrome(): Promise<void> {
   const executablePath = findChrome()
@@ -139,6 +140,7 @@ export async function closeBrowser(): Promise<void> {
   browser = null
   listPage = null
   gamePages.clear()
+  gameUrlCache.clear()
 }
 
 // ─── Scraping: lista de jogos ao vivo (/IP/B1) ───────────────────────────────
@@ -350,85 +352,148 @@ export async function navigateBet365GamePage(
 
   if (!listPage) return false
 
-  const marked = await listPage.evaluate((t1: string, t2: string): boolean => {
-    function normalize(s: string) { return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase() }
-    function fuzzy(hay: string, needle: string) {
-      const h = normalize(hay), n = normalize(needle)
-      if (h.includes(n)) return true
-      return n.split(/\s+/).some(w => w.length >= 4 && h.includes(w))
-    }
-    for (const fixture of Array.from(document.querySelectorAll('.ovm-Fixture'))) {
-      const teamEls = fixture.querySelectorAll('.ovm-FixtureDetailsTwoWay_TeamName')
-      if (teamEls.length < 2) continue
-      const ft1 = (teamEls[0].textContent ?? '').trim()
-      const ft2 = (teamEls[1].textContent ?? '').trim()
-      if (!fuzzy(ft1, t1) && !fuzzy(ft1, t2)) continue
-      if (!fuzzy(ft2, t1) && !fuzzy(ft2, t2)) continue
-      const target = fixture.querySelector('.ovm-FixtureDetailsTwoWay_Wrapper') ?? fixture
-      ;(target as HTMLElement).setAttribute('data-rb-nav', 'true')
-      return true
-    }
-    return false
-  }, team1, team2)
+  const cacheKey = `${team1}|${team2}`
+  let gameUrl = gameUrlCache.get(cacheKey) ?? null
 
-  if (!marked) {
-    console.warn('[chromeBridge] Jogo não encontrado na listPage:', team1, 'x', team2)
-    return false
-  }
+  if (!gameUrl) {
+    // Primeira vez: captura URL via click na listPage
 
-  let cdpSession: Awaited<ReturnType<Page['createCDPSession']>> | null = null
-  let windowId: number | null = null
-  let wasMinimized = false
-  try {
-    cdpSession = await listPage.createCDPSession()
-    const winInfo = await cdpSession.send('Browser.getWindowForTarget') as { windowId: number; bounds: { windowState: string } }
-    windowId = winInfo.windowId
-    wasMinimized = winInfo.bounds.windowState === 'minimized'
-    if (wasMinimized) {
-      await cdpSession.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } })
+    const marked = await listPage.evaluate((t1: string, t2: string): boolean => {
+      function normalize(s: string) { return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase() }
+      function fuzzy(hay: string, needle: string) {
+        const h = normalize(hay), n = normalize(needle)
+        if (h.includes(n)) return true
+        return n.split(/\s+/).some(w => w.length >= 4 && h.includes(w))
+      }
+      for (const fixture of Array.from(document.querySelectorAll('.ovm-Fixture'))) {
+        const teamEls = fixture.querySelectorAll('.ovm-FixtureDetailsTwoWay_TeamName')
+        if (teamEls.length < 2) continue
+        const ft1 = (teamEls[0].textContent ?? '').trim()
+        const ft2 = (teamEls[1].textContent ?? '').trim()
+        if (!fuzzy(ft1, t1) && !fuzzy(ft1, t2)) continue
+        if (!fuzzy(ft2, t1) && !fuzzy(ft2, t2)) continue
+        const target = fixture.querySelector('.ovm-FixtureDetailsTwoWay_Wrapper') ?? fixture
+        ;(target as HTMLElement).setAttribute('data-rb-nav', 'true')
+        return true
+      }
+      return false
+    }, team1, team2)
+
+    if (!marked) {
+      console.warn('[chromeBridge] Jogo não encontrado na listPage:', team1, 'x', team2)
+      return false
     }
-    await listPage.bringToFront()
+
+    let cdpSession: Awaited<ReturnType<Page['createCDPSession']>> | null = null
+    let windowId: number | null = null
+    try {
+      cdpSession = await listPage.createCDPSession()
+      const winInfo = await cdpSession.send('Browser.getWindowForTarget') as { windowId: number; bounds: { windowState: string } }
+      windowId = winInfo.windowId
+      // Garante janela com tamanho usável (mesmo off-screen) para o click funcionar corretamente
+      await cdpSession.send('Browser.setWindowBounds', {
+        windowId,
+        bounds: { windowState: 'normal', width: 1280, height: 900, left: -3300, top: -3300 },
+      })
+      await listPage.bringToFront()
+      await new Promise(r => setTimeout(r, 300))
+    } catch (e) {
+      console.warn('[chromeBridge] CDP focus falhou (continuando):', e)
+    }
+
+    const reMinimize = async () => {
+      if (cdpSession && windowId !== null) {
+        await cdpSession.send('Browser.setWindowBounds', {
+          windowId,
+          bounds: { windowState: 'normal', width: 1, height: 1, left: -3200, top: -3200 },
+        }).catch(() => {})
+      }
+      await cdpSession?.detach().catch(() => {})
+    }
+
+    const beforeUrl = listPage.url()
+    let capturedUrl: string | null = null
+
+    // URL de jogo válida contém /EV{id} — ex: #/IP/EV151343427462C1
+    // #/HO/ e #/IP/B1 não contêm /EV → rejeitados
+    const isValidGameUrl = (url: string) =>
+      url !== beforeUrl && /\/EV[A-Z0-9]+/.test(url)
+
+    const navHandler = () => {
+      const url = listPage!.url()
+      if (isValidGameUrl(url)) capturedUrl = url
+    }
+    listPage.on('framenavigated', navHandler)
+
+    // Captura URL se bet365 abrir o jogo em nova aba
+    let newTabUrl: string | null = null
+    let newTabSettled = false
+    const targetCreatedHandler = async (target: { type(): string; page(): Promise<Page | null> }) => {
+      if (target.type() !== 'page') return
+      const tp = await target.page()
+      if (!tp) { newTabSettled = true; return }
+      await new Promise(r => setTimeout(r, 1000))
+      const url = tp.url()
+      if (isValidGameUrl(url)) newTabUrl = url
+      newTabSettled = true
+      await tp.close().catch(() => {})
+    }
+    browser.on('targetcreated', targetCreatedHandler)
+
+    // Scroll ao centro do viewport para evitar header/overlay fixo no topo
+    await listPage.evaluate(() => {
+      (document.querySelector('[data-rb-nav]') as HTMLElement | null)
+        ?.scrollIntoView({ block: 'center', behavior: 'instant' })
+    }).catch(() => {})
+    await new Promise(r => setTimeout(r, 200))
+
+    // Diagnóstico: posição do elemento pós-scroll e URL antes do click
+    const preClickInfo = await listPage.evaluate(() => {
+      const el = document.querySelector('[data-rb-nav]') as HTMLElement | null
+      if (!el) return null
+      const r = el.getBoundingClientRect()
+      return { top: Math.round(r.top), height: Math.round(r.height), tag: el.tagName, cls: el.className.slice(0, 80) }
+    }).catch(() => null)
+    console.log('[chromeBridge] pré-click:', preClickInfo, '| URL:', listPage.url())
+
+    // page.click() envia eventos com isTrusted=true via CDP (exigido pelo SPA da bet365)
+    await listPage.click('[data-rb-nav]')
+    await listPage.evaluate(() => {
+      document.querySelector('[data-rb-nav]')?.removeAttribute('data-rb-nav')
+    }).catch(() => {})
+
     await new Promise(r => setTimeout(r, 300))
-  } catch (e) {
-    console.warn('[chromeBridge] CDP focus falhou (continuando):', e)
-  }
+    console.log('[chromeBridge] URL 300ms pós-click:', listPage.url())
 
-  const beforeUrl = listPage.url()
-  await listPage.click('[data-rb-nav]')
-  await listPage.evaluate(() => {
-    document.querySelector('[data-rb-nav]')?.removeAttribute('data-rb-nav')
-  }).catch(() => {})
-
-  let gameUrl = listPage.url()
-  for (let i = 0; i < 30; i++) {
-    if (gameUrl !== beforeUrl) break
-    await new Promise(r => setTimeout(r, 100))
-    gameUrl = listPage.url()
-  }
-  console.log('[chromeBridge] URL capturada:', gameUrl)
-
-  const reMinimize = async () => {
-    if (wasMinimized && cdpSession && windowId !== null) {
-      await cdpSession.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } }).catch(() => {})
+    for (let i = 0; i < 50 && capturedUrl === null && !newTabSettled; i++) {
+      await new Promise(r => setTimeout(r, 100))
+      const currentUrl = listPage!.url()
+      if (isValidGameUrl(currentUrl)) capturedUrl = currentUrl
     }
-    await cdpSession?.detach().catch(() => {})
-  }
+    listPage.off('framenavigated', navHandler)
+    browser.off('targetcreated', targetCreatedHandler)
 
-  if (gameUrl === beforeUrl) {
-    console.error('[chromeBridge] Navegação falhou — URL não mudou para:', team1, 'x', team2)
+    gameUrl = capturedUrl ?? newTabUrl ?? null
+    if (!gameUrl) {
+      console.error('[chromeBridge] Nenhuma URL de jogo válida capturada para:', team1, 'x', team2)
+      await listPage.evaluate(() => { window.location.hash = '/IP/B1' }).catch(() => {})
+      await reMinimize()
+      return false
+    }
+    console.log('[chromeBridge] URL capturada:', gameUrl)
+    gameUrlCache.set(cacheKey, gameUrl)
+    console.log('[chromeBridge] URL cacheada para:', cacheKey)
+
+    await listPage.evaluate(() => { window.location.hash = '/IP/B1' })
     await reMinimize()
-    return false
+    if (chromePid) hideChromeFromTaskbar(chromePid)
+  } else {
+    console.log('[chromeBridge] Usando URL cacheada para:', cacheKey, '→', gameUrl)
   }
-
-  await listPage.goto('https://www.bet365.com/#/IP/B1', { waitUntil: 'domcontentloaded', timeout: 10_000 })
-  await reMinimize()
-  // Chrome volta ao estado normal/minimizado — re-aplica hide pois o restore pode ter recolocado na taskbar
-  if (chromePid) hideChromeFromTaskbar(chromePid)
 
   const page = await browser.newPage()
   await page.goto(gameUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 })
   console.log('[chromeBridge] Nova página para:', pageKey, '→', gameUrl)
-  // Nova aba pode ter aberto nova janela Chrome — garante que está escondida
   if (chromePid) hideChromeFromTaskbar(chromePid)
 
   await page.waitForSelector('[data-mbl-variant="ML1"]', { timeout: 8_000 })
