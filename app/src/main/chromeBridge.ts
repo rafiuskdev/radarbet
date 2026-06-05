@@ -113,6 +113,47 @@ let chromePid:  number | null = null
 const gamePages  = new Map<string, Page>()
 const gameUrlCache = new Map<string, string>() // key: `${team1}|${team2}` → URL do evento bet365
 
+// Mantém a página "ativa" mesmo com a janela minimizada/off-screen.
+// A bet365 pausa o push de odds quando document.hidden = true (visibilityState
+// 'hidden'). setFocusEmulationEnabled força a página a ser tratada como visível
+// e focada; setWebLifecycleState 'active' impede o congelamento do renderer.
+export async function keepPageActive(page: Page): Promise<void> {
+  try {
+    const client = await page.createCDPSession()
+    await client.send('Emulation.setFocusEmulationEnabled', { enabled: true })
+    await client.send('Page.setWebLifecycleState', { state: 'active' }).catch(() => {})
+  } catch (e) {
+    console.warn('[chromeBridge] keepPageActive falhou:', (e as Error).message)
+  }
+}
+
+// Força a página a reportar SEMPRE visível/focada e bloqueia os eventos de pausa.
+// A bet365/RF param o push de odds/lances ao detetar document.hidden=true (janela
+// minimizada). Tem de ser injetado ANTES do goto (evaluateOnNewDocument) para
+// apanhar os scripts iniciais da página.
+export async function forcePageVisible(page: Page): Promise<void> {
+  try {
+    await page.evaluateOnNewDocument(() => {
+      const def = (name: string, val: unknown): void => {
+        try { Object.defineProperty(Document.prototype, name, { configurable: true, get: () => val }) } catch { /* noop */ }
+        try { Object.defineProperty(document, name, { configurable: true, get: () => val }) } catch { /* noop */ }
+      }
+      def('visibilityState', 'visible')
+      def('webkitVisibilityState', 'visible')
+      def('hidden', false)
+      def('webkitHidden', false)
+      try { document.hasFocus = () => true } catch { /* noop */ }
+      const block = (e: Event): void => { e.stopImmediatePropagation() }
+      for (const evt of ['visibilitychange', 'webkitvisibilitychange', 'freeze', 'pagehide']) {
+        window.addEventListener(evt, block, true)
+        document.addEventListener(evt, block, true)
+      }
+    })
+  } catch (e) {
+    console.warn('[chromeBridge] forcePageVisible falhou:', (e as Error).message)
+  }
+}
+
 export async function launchChrome(): Promise<void> {
   const executablePath = findChrome()
   if (!executablePath) throw new Error('Chrome não encontrado no sistema')
@@ -130,6 +171,12 @@ export async function launchChrome(): Promise<void> {
       '--start-minimized',
       '--window-size=1,1',
       '--window-position=-3200,-3200',
+      // Anti-throttling: impede o Chrome de "adormecer" a janela minimizada/off-screen
+      // (sem isto a bet365 pausa o push de odds quando a página fica em background)
+      '--disable-background-timer-throttling',
+      '--disable-renderer-backgrounding',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-features=CalculateNativeWinOcclusion',
     ],
     defaultViewport: { width: 800, height: 600 },
   })
@@ -138,7 +185,9 @@ export async function launchChrome(): Promise<void> {
 
   const pages = await browser.pages()
   listPage = pages[0] ?? await browser.newPage()
+  await forcePageVisible(listPage)
   await listPage.goto(`${activeBet365BaseUrl}/#/IP/B1`, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  await keepPageActive(listPage)
 
   if (chromePid) hideChromeFromTaskbar(chromePid)
 }
@@ -502,7 +551,9 @@ export async function navigateBet365GamePage(
   }
 
   const page = await browser.newPage()
+  await forcePageVisible(page)  // injeta override de visibilidade ANTES do goto
   await page.goto(gameUrl, { waitUntil: 'domcontentloaded', timeout: 20_000 })
+  await keepPageActive(page)   // impede o congelamento do push de odds em background
   console.log('[chromeBridge] Nova página para:', pageKey, '→', gameUrl)
   if (chromePid) hideChromeFromTaskbar(chromePid)
 

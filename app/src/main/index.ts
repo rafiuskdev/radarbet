@@ -217,6 +217,16 @@ function startRfMatchPolling(): void {
 
 const lastExtraTimeByGw = new Map<string, string | null>()
 
+// Debug de monitorização das odds — deteta "congelamento" (relógio vs odds)
+interface RadarDbg { time?: string | null; odds?: string; oddsFrozen: number; clockFrozen: number }
+const radarDbg = new Map<string, RadarDbg>()
+
+interface GameData {
+  time?: string | null; extraTime?: string | null; suspended?: boolean; score?: number | null
+  goals?: { label?: string; lines?: { line: number; over: number | null; under: number | null }[] } | null
+  updatedAt?: number
+}
+
 // Polling do radar de odds — cada janela *:radar tem a sua própria página bet365
 function startRadarPolling(): void {
   if (radarPollInterval) return
@@ -226,9 +236,27 @@ function startRadarPolling(): void {
       if (!key.endsWith(':radar') || win.isDestroyed()) continue
       hasActive = true
       const page = getBet365GamePage(key)
-      if (!page) continue
-      const data = await scrapeGameData(page)
-      if (data) {
+      if (!page) { console.warn('[radar] %s — SEM página bet365 (getBet365GamePage null)', key); continue }
+      const data = await scrapeGameData(page) as GameData | null
+      if (!data) { console.warn('[radar] %s — scrape retornou NULL (página morta/erro?)', key); continue }
+
+      // ── Log de monitorização: relógio vs odds (deteta freeze) ────────────────
+      const lines   = data.goals?.lines ?? []
+      const oddsStr = lines.map(l => `${l.line}:U${l.under ?? '-'}`).join(' ')
+      const prev    = radarDbg.get(key)
+      const clockMoved = !prev || prev.time !== data.time
+      const oddsMoved  = !prev || prev.odds !== oddsStr
+      const oddsFrozen  = oddsMoved  ? 0 : (prev?.oddsFrozen  ?? 0) + 1
+      const clockFrozen = clockMoved ? 0 : (prev?.clockFrozen ?? 0) + 1
+      radarDbg.set(key, { time: data.time, odds: oddsStr, oddsFrozen, clockFrozen })
+      console.log('[radar] %s clock=%s odds=%s | t=%s+%s score=%s susp=%s | %s',
+        key,
+        clockMoved ? '▶' : `⏸x${clockFrozen}(${clockFrozen * 2}s)`,
+        oddsMoved  ? '▶' : `⏸x${oddsFrozen}(${oddsFrozen * 2}s)`,
+        data.time ?? '-', data.extraTime ?? '', data.score ?? '-', data.suspended,
+        oddsStr || '(sem mercado de golos)')
+
+      {
         latestGameData = data
         win.webContents.send('gameDataUpdate', data)
 
@@ -323,7 +351,7 @@ function setupIPC(): void {
     }
 
     if (featureId === 'lances') {
-      const g = gameWinData.get(gwId) as { team1: string; team2: string; score?: string; time?: string } | null
+      const g = gameWinData.get(gwId) as { team1: string; team2: string; score?: string; time?: string; league?: string; country?: string } | null
       const compositeKey = `${gwId}:lances`
       if (g?.team1 && g?.team2) {
         featureWins.get(compositeKey)?.webContents.send('rfGameChanged')
@@ -331,7 +359,7 @@ function setupIPC(): void {
         const epoch = ++rfNavEpoch
         launchRfChrome()
           .then(async () => {
-            const nav = await navigateToRfGame(g.team1, g.team2, compositeKey, g.score, g.time)
+            const nav = await navigateToRfGame(g.team1, g.team2, compositeKey, g.score, g.time, g.league, g.country)
             if (epoch !== rfNavEpoch) return
             if (nav.ok) {
               startRfMatchPolling()
