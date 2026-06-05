@@ -431,8 +431,8 @@ async function ensureRfBrowser(): Promise<boolean> {
       '--disable-blink-features=AutomationControlled',
       '--no-first-run',
       '--no-default-browser-check',
-      '--window-size=1,1',
-      '--window-position=-3200,-3200',  // fora do ecrã — invisível para o utilizador
+      '--window-size=1280,900',          // tamanho REAL off-screen (1×1 é estrangulado pelo Chrome)
+      '--window-position=-3300,-3300',   // fora do ecrã — invisível para o utilizador
       // Anti-throttling: mantém o push de lances vivo com a janela em background
       '--disable-background-timer-throttling',
       '--disable-renderer-backgrounding',

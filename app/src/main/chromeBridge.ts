@@ -168,11 +168,13 @@ export async function launchChrome(): Promise<void> {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-extensions',
-      '--start-minimized',
-      '--window-size=1,1',
-      '--window-position=-3200,-3200',
-      // Anti-throttling: impede o Chrome de "adormecer" a janela minimizada/off-screen
-      // (sem isto a bet365 pausa o push de odds quando a página fica em background)
+      // Janela off-screen com TAMANHO REAL (não 1×1 nem minimizada): uma janela
+      // de área ~zero é estrangulada pelo Chrome (o compositor pára e a bet365
+      // deixa de empurrar odds). 1280×900 em -3300,-3300 fica fora do ecrã mas
+      // "visível" para o Chrome, mantendo o feed de odds vivo.
+      '--window-size=1280,900',
+      '--window-position=-3300,-3300',
+      // Anti-throttling: impede o Chrome de "adormecer" a janela em background
       '--disable-background-timer-throttling',
       '--disable-renderer-backgrounding',
       '--disable-backgrounding-occluded-windows',
@@ -462,9 +464,11 @@ export async function navigateBet365GamePage(
 
     const reMinimize = async () => {
       if (cdpSession && windowId !== null) {
+        // Mantém a janela off-screen mas com tamanho REAL (não 1×1) para o Chrome
+        // não estrangular o render — senão a bet365 pára de empurrar odds.
         await cdpSession.send('Browser.setWindowBounds', {
           windowId,
-          bounds: { windowState: 'normal', width: 1, height: 1, left: -3200, top: -3200 },
+          bounds: { windowState: 'normal', width: 1280, height: 900, left: -3300, top: -3300 },
         }).catch(() => {})
       }
       await cdpSession?.detach().catch(() => {})
